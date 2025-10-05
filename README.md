@@ -1,4 +1,4 @@
-# StudyTrackerGithub
+# Study Tracker
 A detailed study/time tracker with various data visualizations
 # Focus & Wellness Tracker
 
