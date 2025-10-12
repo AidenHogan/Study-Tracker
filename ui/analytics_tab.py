@@ -1,4 +1,4 @@
-# file: analytics_tab.py
+# file: ui/analytics_tab.py
 
 import customtkinter as ctk
 import pandas as pd
@@ -7,9 +7,9 @@ from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 import os
 
-import database_manager as db
-import plot_manager as pm
-import correlation_engine
+from core import database_manager as db
+from core import plot_manager as pm
+from core import correlation_engine
 
 
 class AnalyticsTab(ctk.CTkFrame):
@@ -24,47 +24,38 @@ class AnalyticsTab(ctk.CTkFrame):
         self.end_date = date.today()
         self.analysis_method = ctk.StringVar(value="Strict")
         self.model_type = ctk.StringVar(value="Lasso")
-        # --- NEW: State variable for the category filter ---
         self.category_filter = ctk.StringVar(value="All Time")
 
         # --- UI Setup ---
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
         self._create_widgets()
-        # self.update_charts() # Main app will call this
 
     def _create_widgets(self):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=10)
-        # --- Adjusted column configuration for new widget ---
         header_frame.columnconfigure(3, weight=1)
 
         ctk.CTkLabel(header_frame, text="Study Analytics", font=ctk.CTkFont(size=20, weight="bold")).grid(row=0,
                                                                                                           column=0,
                                                                                                           sticky="w")
 
-        # --- NEW: Category Filter Segmented Button ---
+        # Category Filter
         ctk.CTkLabel(header_frame, text="Filter by Category:").grid(row=0, column=1, padx=(20, 5), sticky="w")
-        ctk.CTkSegmentedButton(
-            header_frame,
-            values=["All Time", "School Work"],
-            variable=self.category_filter,
-            command=lambda v: self.update_charts()
-        ).grid(row=0, column=2, padx=5, sticky="w")
+        ctk.CTkSegmentedButton(header_frame, values=["All Time", "School Work"],
+                               variable=self.category_filter,
+                               command=lambda v: self.update_charts()).grid(row=0, column=2, sticky="w")
 
-        # --- Date range controls moved to the right ---
-        date_nav_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-        date_nav_frame.grid(row=0, column=3, sticky="e")
-
-        ctk.CTkButton(date_nav_frame, text="<", width=30, command=lambda: self._cycle_date_range(-1)).pack(side="left",
-                                                                                                           padx=(20, 5))
-        self.date_range_label = ctk.CTkLabel(date_nav_frame, text="Date Range", font=ctk.CTkFont(size=14))
-        self.date_range_label.pack(side="left")
-        ctk.CTkButton(date_nav_frame, text=">", width=30, command=lambda: self._cycle_date_range(1)).pack(side="left",
-                                                                                                          padx=(5, 20))
-        ctk.CTkSegmentedButton(date_nav_frame, values=["Day", "Week", "Month", "Year"], variable=self.view_mode,
-                               command=self._on_view_mode_change).pack(side="left", padx=5)
-        ctk.CTkButton(date_nav_frame, text="Export Data", command=self.export_data).pack(side="left", padx=(20, 10))
+        ctk.CTkButton(header_frame, text="<", width=30, command=lambda: self._cycle_date_range(-1)).grid(row=0,
+                                                                                                         column=4,
+                                                                                                         padx=(20, 5))
+        self.date_range_label = ctk.CTkLabel(header_frame, text="Date Range", font=ctk.CTkFont(size=14))
+        self.date_range_label.grid(row=0, column=5, sticky="ew")  # Changed column
+        ctk.CTkButton(header_frame, text=">", width=30, command=lambda: self._cycle_date_range(1)).grid(row=0, column=6,
+                                                                                                        padx=(5, 20))
+        ctk.CTkSegmentedButton(header_frame, values=["Day", "Week", "Month", "Year"], variable=self.view_mode,
+                               command=self._on_view_mode_change).grid(row=0, column=7, padx=5)
+        ctk.CTkButton(header_frame, text="Export Data", command=self.export_data).grid(row=0, column=8, padx=(20, 10))
 
         self.charts_frame = ctk.CTkFrame(self)
         self.charts_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 10))
@@ -99,7 +90,6 @@ class AnalyticsTab(ctk.CTkFrame):
         ctk.CTkSegmentedButton(self.analysis_controls_frame, values=["Strict", "Imputed"],
                                variable=self.analysis_method, command=lambda v: self.update_charts()).pack(side="left")
 
-    # ... (no changes to _get_date_range, _cycle_date_range, _cycle_chart_page, _on_view_mode_change, _clear_chart_frames) ...
     def _get_date_range(self):
         end = self.end_date
         mode = self.view_mode.get()
@@ -158,22 +148,19 @@ class AnalyticsTab(ctk.CTkFrame):
         else:
             self.analysis_controls_frame.grid_remove()
 
-        # --- NEW: Build dynamic WHERE clause and parameters based on filter ---
-        where_clause = "WHERE date(s.start_time) BETWEEN ? AND ?"
-        params = [start_date.isoformat(), end_date.isoformat()]
-
         if self.category_filter.get() == "School Work":
-            where_clause += " AND t.category_name = ?"
-            params.append("School Work")
+            where_clause = "WHERE date(s.start_time) BETWEEN ? AND ? AND t.category_name = 'School Work'"
+            params = [start_date.isoformat(), end_date.isoformat()]
+        else:
+            where_clause = "WHERE date(s.start_time) BETWEEN ? AND ?"
+            params = [start_date.isoformat(), end_date.isoformat()]
 
         page_renderers = {
             0: self._render_overview_page, 1: self._render_health_correlation_page,
             2: self._render_numerical_stats_page, 3: self._render_modeling_page
         }
         renderer = page_renderers.get(self.page)
-        if renderer:
-            # Pass the dynamic clause and params to the rendering methods
-            renderer(start_date, end_date, where_clause, params)
+        if renderer: renderer(start_date, end_date, where_clause, params)
 
     def _render_overview_page(self, start_date, end_date, where_clause, params):
         time_range_str = self.view_mode.get()
@@ -196,18 +183,8 @@ class AnalyticsTab(ctk.CTkFrame):
             self.chart_frame_br)
 
     def _render_health_correlation_page(self, start_date, end_date, where_clause, params):
-        # Health correlations need a slightly different query structure
-        study_query = f"SELECT date(s.start_time) as date, SUM(s.duration_seconds) / 60.0 as total_study_minutes FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY date(s.start_time)"
-        with db.db_connection() as conn:
-            study_df = pd.read_sql_query(study_query, conn, params=params, index_col='date', parse_dates=['date'])
-
-        health_query = "SELECT date, sleep_score, body_battery, sleep_duration_seconds, avg_stress FROM health_metrics WHERE date BETWEEN ? AND ?"
-        with db.db_connection() as conn:
-            health_df = pd.read_sql_query(health_query, conn, params=[start_date.isoformat(), end_date.isoformat()],
-                                          index_col='date', parse_dates=['date'])
-
-        # Join health data with potentially filtered study data
-        df = health_df.join(study_df).fillna(0)
+        # *** BUG FIX: Removed .reset_index() as it's now handled in the database manager ***
+        df = db.get_health_and_study_data(start_date, end_date, where_clause, params)
 
         if not df.empty:
             for col in ['sleep_score', 'total_study_minutes', 'sleep_duration_seconds', 'body_battery', 'avg_stress']:
@@ -227,14 +204,10 @@ class AnalyticsTab(ctk.CTkFrame):
         pm.embed_figure_in_frame(pm.create_trends_chart(df, self.view_mode.get()), self.chart_frame_br)
 
     def _render_numerical_stats_page(self, start_date, end_date, where_clause, params):
-        # We need to adapt the numerical analytics function to accept the filter
         stats_data = db.get_numerical_analytics(start_date, end_date, where_clause, params)
         for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl,
                       self.chart_frame_br]: frame.configure(fg_color=("#DBDBDB", "#2B2B2B"))
-        if stats_data is None:
-            ctk.CTkLabel(self.chart_frame_tl, text="No data for this period.", font=ctk.CTkFont(size=16)).pack(
-                expand=True)
-            return
+
         ctk.CTkLabel(self.chart_frame_tl, text="Overall Stats", font=ctk.CTkFont(size=16, weight="bold")).pack(
             anchor="w", padx=10, pady=(10, 5))
         ctk.CTkLabel(self.chart_frame_tl, text=f"Total Focus: {timedelta(seconds=int(stats_data['total_seconds']))}",
@@ -270,18 +243,21 @@ class AnalyticsTab(ctk.CTkFrame):
                                                                                                                   5))
         ctk.CTkLabel(self.chart_frame_br, text=f"Top Subject: {stats_data['top_tag']}", anchor="w").pack(anchor="w",
                                                                                                          padx=20)
-        top_day_str = pd.to_datetime(stats_data['most_productive_day']).strftime('%B %d, %Y')
-        ctk.CTkLabel(self.chart_frame_br, text=f"Most Productive Day: {top_day_str}", anchor="w", wraplength=250).pack(
-            anchor="w", padx=20)
-        ctk.CTkLabel(self.chart_frame_br,
-                     text=f"  - Focus Time: {timedelta(seconds=int(stats_data['most_productive_day_seconds']))}",
-                     anchor="w").pack(anchor="w", padx=20)
+
+        if stats_data['most_productive_day'] != "N/A":
+            top_day_str = pd.to_datetime(stats_data['most_productive_day']).strftime('%B %d, %Y')
+            ctk.CTkLabel(self.chart_frame_br, text=f"Most Productive Day: {top_day_str}", anchor="w",
+                         wraplength=250).pack(anchor="w", padx=20)
+            ctk.CTkLabel(self.chart_frame_br,
+                         text=f"  - Focus Time: {timedelta(seconds=int(stats_data['most_productive_day_seconds']))}",
+                         anchor="w").pack(anchor="w", padx=20)
+        else:
+            ctk.CTkLabel(self.chart_frame_br, text="Most Productive Day: N/A", anchor="w").pack(anchor="w", padx=20)
 
     def _render_modeling_page(self, start_date, end_date, where_clause, params):
         for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl,
                       self.chart_frame_br]: frame.configure(fg_color=("#DBDBDB", "#2B2B2B"))
 
-        # The correlation engine needs to be aware of the filter as well.
         df = correlation_engine.prepare_daily_features(start_date, end_date, where_clause, params)
         model_type = self.model_type.get()
 
@@ -289,7 +265,7 @@ class AnalyticsTab(ctk.CTkFrame):
             results = correlation_engine.run_weekly_efficiency_analysis(df)
         else:
             results = correlation_engine.run_analysis(start_date, end_date, data_method=self.analysis_method.get(),
-                                                      model_type=model_type, where_clause=where_clause, params=params)
+                                                      model_type=model_type)
 
         if "error" in results:
             for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl,
@@ -306,7 +282,6 @@ class AnalyticsTab(ctk.CTkFrame):
         display_func = display_map.get(results.get("model_type"))
         if display_func: display_func(results)
 
-    # ... (no changes to the _display_* results methods) ...
     def _display_standard_results(self, results):
         ctk.CTkLabel(self.chart_frame_tl, text="Significant Factors", font=ctk.CTkFont(size=16, weight="bold")).pack(
             anchor="w", padx=10, pady=(10, 5))
@@ -424,8 +399,8 @@ class AnalyticsTab(ctk.CTkFrame):
         ctk.CTkLabel(br_scroll_frame, text="How to Read This", font=ctk.CTkFont(size=16, weight="bold")).pack(
             anchor="w", padx=10, pady=(15, 5))
         explanation = "PCA combines your metrics into abstract 'Principal Components' that capture the most information.\n\nPC Significance:\nShows if these abstract components have a statistically significant effect on study time.\n\nComponent Loadings:\nShows which of your original factors (e.g., Sleep Score) are the main ingredients in each PC."
-        ctk.CTkLabel(br_scroll_frame, text=explanation, justify="left", wraplength=250, anchor="nw").pack(anchor="w",
-                                                                                                          padx=10)
+        ctk.CTkLabel(explanation_frame, text=explanation, justify="left", wraplength=250, anchor="nw").pack(anchor="w",
+                                                                                                            padx=10)
 
     def _display_weekly_results(self, results):
         ctk.CTkLabel(self.chart_frame_tl, text="Weekly Data Preview", font=ctk.CTkFont(size=16, weight="bold")).pack(
@@ -462,16 +437,17 @@ class AnalyticsTab(ctk.CTkFrame):
         folder = filedialog.askdirectory()
         if not folder: return
         try:
-            # --- NEW: Adapt export to respect the filter ---
-            where_clause = "WHERE date(s.start_time) BETWEEN ? AND ?"
-            params = [start_date.isoformat(), end_date.isoformat()]
             if self.category_filter.get() == "School Work":
-                where_clause += " AND t.category_name = ?"
-                params.append("School Work")
+                where_clause = "WHERE date(s.start_time) BETWEEN ? AND ? AND t.category_name = 'School Work'"
+                params = [start_date.isoformat(), end_date.isoformat()]
+            else:
+                where_clause = "WHERE date(s.start_time) BETWEEN ? AND ?"
+                params = [start_date.isoformat(), end_date.isoformat()]
 
             with db.db_connection() as conn:
                 sessions_df = pd.read_sql_query(
-                    f"SELECT s.* FROM sessions s JOIN tags t ON s.tag = t.name {where_clause}", conn, params=params)
+                    f"SELECT s.*, t.category_name FROM sessions s JOIN tags t ON s.tag = t.name {where_clause}", conn,
+                    params=params)
                 health_df = pd.read_sql_query("SELECT * FROM health_metrics WHERE date BETWEEN ? AND ?", conn,
                                               params=[start_date.isoformat(), end_date.isoformat()])
 

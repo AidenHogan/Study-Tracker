@@ -1,7 +1,5 @@
-# file: data_importer.py
-
 import pandas as pd
-import database_manager as db
+from . import database_manager as db
 
 # --- Constants for Garmin CSV parsing ---
 # These constants make it easy to update if the CSV column names change.

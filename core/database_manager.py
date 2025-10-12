@@ -1,4 +1,4 @@
-# file: database_manager.py
+# file: core/database_manager.py
 
 import sqlite3
 import os
@@ -63,8 +63,7 @@ def setup_database():
                            NULL,
                            notes
                            TEXT
-                       )
-                       ''')
+                       )''')
 
         cursor.execute('''
                        CREATE TABLE IF NOT EXISTS tags
@@ -88,21 +87,17 @@ def setup_database():
                        ) REFERENCES categories
                        (
                            name
-                       )
-                           )
-                       ''')
+                       ))''')
 
-        cursor.execute('''
-                       CREATE TABLE IF NOT EXISTS categories
-                       (
-                           name
-                           TEXT
-                           PRIMARY
-                           KEY
-                           NOT
-                           NULL
-                       )
-                       ''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS categories
+                          (
+                              name
+                              TEXT
+                              PRIMARY
+                              KEY
+                              NOT
+                              NULL
+                          )''')
 
         cursor.execute('''
                        CREATE TABLE IF NOT EXISTS health_metrics
@@ -125,8 +120,7 @@ def setup_database():
                            INTEGER,
                            avg_stress
                            INTEGER
-                       )
-                       ''')
+                       )''')
 
         cursor.execute('''
                        CREATE TABLE IF NOT EXISTS activities
@@ -153,8 +147,7 @@ def setup_database():
                            REAL,
                            calories
                            INTEGER
-                       )
-                       ''')
+                       )''')
 
         cursor.execute('''
                        CREATE TABLE IF NOT EXISTS pomodoro_sessions
@@ -193,10 +186,7 @@ def setup_database():
                        ) REFERENCES sessions
                        (
                            id
-                       )
-                           )
-                       ''')
-        # Inside the setup_database function, after the other CREATE TABLE statements...
+                       ))''')
 
         cursor.execute('''
                        CREATE TABLE IF NOT EXISTS custom_factors
@@ -209,8 +199,7 @@ def setup_database():
                            TEXT
                            NOT
                            NULL
-                       )
-                       ''')
+                       )''')
 
         cursor.execute('''
                        CREATE TABLE IF NOT EXISTS custom_factor_log
@@ -244,9 +233,7 @@ def setup_database():
                        (
                            factor_name,
                            date
-                       )
-                           )
-                       ''')
+                       ))''')
 
         _add_column_if_not_exists(cursor, 'sessions', 'notes', 'TEXT')
         _add_column_if_not_exists(cursor, 'tags', 'color', "TEXT DEFAULT '#3b8ed0'")
@@ -264,7 +251,6 @@ def _add_column_if_not_exists(cursor, table_name, column_name, column_type):
         cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
 
-# --- Generic Helper Functions ---
 def fetch_all(query, params=()):
     with db_connection() as conn:
         cursor = conn.cursor()
@@ -288,7 +274,6 @@ def execute_query(query, params=(), fetch_last_id=False):
             return cursor.lastrowid
 
 
-# --- Category Management ---
 def get_categories():
     return fetch_all("SELECT name FROM categories ORDER BY name")
 
@@ -311,18 +296,12 @@ def update_tag_category(tag_name, category_name):
     execute_query("UPDATE tags SET category_name = ? WHERE name = ?", (cat_name_or_null, tag_name))
 
 
-# --- Tag Management ---
 def get_tags_with_colors_and_categories():
-    query = "SELECT name, color, category_name FROM tags ORDER BY name"
-    return fetch_all(query)
+    return fetch_all("SELECT name, color, category_name FROM tags ORDER BY name")
 
 
 def get_tags():
     return fetch_all("SELECT name FROM tags ORDER BY name")
-
-
-def get_tags_with_colors():
-    return fetch_all("SELECT name, color FROM tags ORDER BY name")
 
 
 def add_tag(tag_name):
@@ -341,7 +320,6 @@ def update_tag_color(tag_name, color):
     execute_query("UPDATE tags SET color = ? WHERE name = ?", (color, tag_name))
 
 
-# --- Session Management ---
 def get_session_by_id(session_id):
     return fetch_one("SELECT tag, start_time, end_time, notes FROM sessions WHERE id = ?", (session_id,))
 
@@ -362,7 +340,6 @@ def delete_session(session_id):
     execute_query("DELETE FROM sessions WHERE id = ?", (session_id,))
 
 
-# --- Pomodoro Session Management ---
 def get_pomodoro_session_by_id(pomo_id):
     query = "SELECT p.task_title, p.task_description, p.main_session_id, s.tag FROM pomodoro_sessions p LEFT JOIN sessions s ON p.main_session_id = s.id WHERE p.id = ?"
     return fetch_one(query, (pomo_id,))
@@ -398,17 +375,47 @@ def get_todays_pomodoro_sessions():
     return fetch_all(query, (today_str,))
 
 
-# --- Analytics Queries ---
 def get_time_by_category(where_clause, params):
     query = f"SELECT IFNULL(t.category_name, 'Uncategorized'), SUM(s.duration_seconds) FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY IFNULL(t.category_name, 'Uncategorized')"
     return fetch_all(query, params)
 
 
+def get_health_and_study_data(start_date, end_date, where_clause, params):
+    health_query = "SELECT date, sleep_score, body_battery, sleep_duration_seconds, avg_stress FROM health_metrics WHERE date BETWEEN ? AND ?"
+    health_params = [start_date, end_date]
+
+    study_query = f"SELECT date(s.start_time) as date, SUM(s.duration_seconds) / 60.0 AS total_study_minutes FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY date(s.start_time)"
+    study_params = params
+
+    with db_connection() as conn:
+        health_df = pd.read_sql_query(health_query, conn, params=health_params, index_col='date')
+        study_df = pd.read_sql_query(study_query, conn, params=study_params, index_col='date')
+
+    # *** BUG FIX: Use an 'outer' join to keep all dates from both datasets ***
+    df = health_df.join(study_df, how='outer')
+    df['total_study_minutes'] = df['total_study_minutes'].fillna(0)
+
+    # Turn the date index into a column for plotting
+    df = df.reset_index()
+    df = df.rename(columns={'index': 'date'})
+    return df
+
+
 def get_numerical_analytics(start_date, end_date, where_clause, params):
     query = f"SELECT s.duration_seconds, date(s.start_time) as session_date, s.tag, IFNULL(t.category_name, 'Uncategorized') as category FROM sessions s JOIN tags t ON s.tag = t.name {where_clause}"
-    with db.db_connection() as conn:
+
+    with db_connection() as conn:
         df = pd.read_sql_query(query, conn, params=params)
-    if df.empty: return None
+
+    if df.empty:
+        return {
+            "total_seconds": 0, "daily_avg_seconds": 0, "num_sessions": 0,
+            "num_days_worked": 0, "avg_session_seconds": 0,
+            "longest_session_seconds": 0, "category_breakdown": {},
+            "top_tag": "N/A", "most_productive_day": "N/A",
+            "most_productive_day_seconds": 0
+        }
+
     total_seconds = df['duration_seconds'].sum()
     num_sessions = len(df)
     num_days_worked = df['session_date'].nunique()
@@ -416,10 +423,11 @@ def get_numerical_analytics(start_date, end_date, where_clause, params):
     avg_session_seconds = df['duration_seconds'].mean()
     longest_session_seconds = df['duration_seconds'].max()
     category_breakdown = df.groupby('category')['duration_seconds'].sum().to_dict()
-    top_tag = df.groupby('tag')['duration_seconds'].sum().idxmax() if not df.empty else "N/A"
+    top_tag = df.groupby('tag')['duration_seconds'].sum().idxmax()
     daily_totals = df.groupby('session_date')['duration_seconds'].sum()
-    most_productive_day = daily_totals.idxmax() if not daily_totals.empty else "N/A"
-    most_productive_day_seconds = daily_totals.max() if not daily_totals.empty else 0
+    most_productive_day = daily_totals.idxmax()
+    most_productive_day_seconds = daily_totals.max()
+
     return {"total_seconds": total_seconds, "daily_avg_seconds": daily_avg_seconds, "num_sessions": num_sessions,
             "num_days_worked": num_days_worked, "avg_session_seconds": avg_session_seconds,
             "longest_session_seconds": longest_session_seconds, "category_breakdown": category_breakdown,
@@ -427,7 +435,6 @@ def get_numerical_analytics(start_date, end_date, where_clause, params):
             "most_productive_day_seconds": most_productive_day_seconds}
 
 
-# --- Health & Activity Data Management ---
 def add_or_replace_health_metric(date, score, rhr, bb, spo2, resp, sleep_sec, stress):
     params = (date, score, rhr, bb, spo2, resp, sleep_sec, stress)
     execute_query(
@@ -436,29 +443,29 @@ def add_or_replace_health_metric(date, score, rhr, bb, spo2, resp, sleep_sec, st
 
 
 def add_manual_sleep_entry(date_str, duration_seconds):
-    execute_query("INSERT OR REPLACE INTO health_metrics (date, sleep_duration_seconds) VALUES (?, ?)",
-                  (date_str, duration_seconds))
+    existing = fetch_one("SELECT sleep_score FROM health_metrics WHERE date = ?", (date_str,))
+    if existing:
+        execute_query("UPDATE health_metrics SET sleep_duration_seconds = ? WHERE date = ?",
+                      (duration_seconds, date_str))
+    else:
+        execute_query("INSERT INTO health_metrics (date, sleep_duration_seconds) VALUES (?, ?)",
+                      (date_str, duration_seconds))
 
 
 def add_activity(activity_type, start_time, duration_seconds, distance, calories):
     params = (activity_type, start_time.isoformat(), duration_seconds, distance, calories)
-    # Using INSERT OR IGNORE to prevent duplicates based on the UNIQUE start_time
     execute_query(
         "INSERT OR IGNORE INTO activities (activity_type, start_time, duration_seconds, distance, calories) VALUES (?, ?, ?, ?, ?)",
         params)
 
-# --- Custom Factor Management ---
 
 def get_custom_factors():
-    """Retrieves the names of all custom factors."""
     return fetch_all("SELECT name FROM custom_factors ORDER BY name")
 
 
 def add_custom_factor(name, start_date):
-    """Adds a new factor and sets its initial 'true' state from the start date."""
     try:
         execute_query("INSERT INTO custom_factors (name, start_date) VALUES (?, ?)", (name, start_date.isoformat()))
-        # Set the initial state to 1 (true) on the start date. The correlation engine will forward-fill this.
         set_factor_override(name, start_date, 1)
         return True, ""
     except sqlite3.IntegrityError:
@@ -466,33 +473,27 @@ def add_custom_factor(name, start_date):
 
 
 def delete_custom_factor(name):
-    """Deletes a factor and all its associated log entries via CASCADE."""
     execute_query("DELETE FROM custom_factors WHERE name = ?", (name,))
 
 
 def set_factor_override(factor_name, date_obj, value):
-    """Inserts or updates a factor's value for a specific day."""
     params = (factor_name, date_obj.isoformat(), value)
     execute_query("INSERT OR REPLACE INTO custom_factor_log (factor_name, date, value) VALUES (?, ?, ?)", params)
 
 
 def get_factor_overrides_for_month(factor_name, year, month):
-    """Gets all explicit overrides for a factor in a given month."""
     month_str = f"{year}-{month:02d}"
     query = "SELECT date, value FROM custom_factor_log WHERE factor_name = ? AND strftime('%Y-%m', date) = ?"
     return fetch_all(query, (factor_name, month_str))
 
 
 def get_factor_status_for_date(factor_name, date_obj):
-    """
-    Determines if a factor was 'active' (1) or 'inactive' (0) on a specific date.
-    It checks the factor's start date and finds the most recent override.
-    """
     factor_info = fetch_one("SELECT start_date FROM custom_factors WHERE name = ?", (factor_name,))
     if not factor_info or date_obj < datetime.fromisoformat(factor_info[0]).date():
-        return None  # Factor didn't exist yet
+        return None
 
     query = "SELECT value FROM custom_factor_log WHERE factor_name = ? AND date <= ? ORDER BY date DESC LIMIT 1"
     last_status = fetch_one(query, (factor_name, date_obj.isoformat()))
 
     return last_status[0] if last_status is not None else None
+

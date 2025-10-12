@@ -1,11 +1,11 @@
-# file: health_tab.py
+# file: ui/health_tab.py
 
 import customtkinter as ctk
 import pandas as pd
 from datetime import datetime, timedelta
 
-import database_manager as db
-import plot_manager as pm
+from core import database_manager as db
+from core import plot_manager as pm
 
 
 class HealthTab(ctk.CTkFrame):
@@ -20,7 +20,6 @@ class HealthTab(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
         self._create_widgets()
-        # self.update_charts() # The main app will call this after initialization
 
     def _create_widgets(self):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -69,10 +68,14 @@ class HealthTab(ctk.CTkFrame):
         time_range_str = self.time_range.get()
         days = {'7 Days': 6, '30 Days': 29, '90 Days': 89, 'Year': 364}.get(time_range_str, 29)
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+        end_date = datetime.now().strftime('%Y-%m-%d')
 
-        query = "SELECT h.date, h.sleep_score, h.body_battery, h.sleep_duration_seconds, IFNULL(SUM(s.duration_seconds) / 60.0, 0) AS total_study_minutes FROM health_metrics h LEFT JOIN sessions s ON h.date = date (s.start_time) WHERE h.date >= ? GROUP BY h.date ORDER BY h.date"
-        with db.db_connection() as conn:
-            df = pd.read_sql_query(query, conn, params=[start_date])
+        # For the health tab, we always get all study data.
+        where_clause = "WHERE date(s.start_time) BETWEEN ? AND ?"
+        params = [start_date, end_date]
+
+        # *** BUG FIX: Removed .reset_index() as it's now handled in the database manager ***
+        df = db.get_health_and_study_data(start_date, end_date, where_clause, params)
 
         if df.empty:
             for frame in [self.sleep_score_chart, self.sleep_duration_chart, self.body_battery_chart,
@@ -81,7 +84,7 @@ class HealthTab(ctk.CTkFrame):
             return
 
         # Safely convert columns to numeric types
-        for col in ['sleep_score', 'total_study_minutes', 'sleep_duration_seconds', 'body_battery']:
+        for col in ['sleep_score', 'total_study_minutes', 'sleep_duration_seconds', 'body_battery', 'avg_stress']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
         df['sleep_duration_hours'] = df['sleep_duration_seconds'] / 3600.0
 
@@ -103,3 +106,4 @@ class HealthTab(ctk.CTkFrame):
 
         fig4 = pm.create_trends_chart(df, time_range_str)
         pm.embed_figure_in_frame(fig4, self.trends_chart)
+

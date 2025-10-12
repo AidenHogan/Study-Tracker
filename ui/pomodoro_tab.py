@@ -6,8 +6,8 @@ from datetime import datetime
 import os
 from plyer import notification
 from playsound import playsound
-import database_manager as db
-from ui_components import PomodoroEditWindow  # Import the new window
+from core import database_manager as db
+from .ui_components import PomodoroEditWindow  # Import the new window
 
 
 class PomodoroTab(ctk.CTkFrame):

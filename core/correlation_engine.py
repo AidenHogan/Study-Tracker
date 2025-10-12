@@ -3,7 +3,7 @@ import statsmodels.api as sm
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LassoCV
-import database_manager as db
+from . import database_manager as db
 
 # --- Constants for column names and prefixes ---
 TARGET_VARIABLE = 'total_study_minutes'

@@ -3,7 +3,7 @@
 import customtkinter as ctk
 from tkinter import messagebox, colorchooser
 from datetime import datetime, timedelta
-import database_manager as db
+from core import database_manager as db
 
 
 class PomodoroEditWindow(ctk.CTkToplevel):

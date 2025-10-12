@@ -1,8 +1,6 @@
-# file: activity_importer.py
-
 import pandas as pd
 from datetime import timedelta
-import database_manager as db
+from . import database_manager as db
 
 # --- Constants for Garmin Activities CSV parsing ---
 COL_ACTIVITY_TYPE = 'Activity Type'

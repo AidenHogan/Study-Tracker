@@ -5,7 +5,7 @@ from tkinter import messagebox
 from datetime import datetime, timedelta, date
 import calendar
 
-import database_manager as db
+from core import database_manager as db
 
 
 class TrackerTab(ctk.CTkFrame):

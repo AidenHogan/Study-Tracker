@@ -5,21 +5,19 @@ from tkinter import messagebox, filedialog
 
 # --- Local Module Imports ---
 # Import the database manager first as it's a core dependency
-import database_manager as db
+from core import database_manager as db, data_importer, activity_importer
 
 # Import data handling modules
-import data_importer
-import activity_importer
 
 # Import UI component modules for pop-up windows
-from ui_components import SessionEditWindow, TagManagementWindow, ManualHealthEntryWindow
-from custom_factors_manager import CustomFactorsWindow
+from ui.ui_components import SessionEditWindow, TagManagementWindow, ManualHealthEntryWindow
+from ui.custom_factors_manager import CustomFactorsWindow
 
 # Import the new, self-contained tab modules
-from tracker_tab import TrackerTab
-from pomodoro_tab import PomodoroTab
-from analytics_tab import AnalyticsTab
-from health_tab import HealthTab
+from ui.tracker_tab import TrackerTab
+from ui.pomodoro_tab import PomodoroTab
+from ui.analytics_tab import AnalyticsTab
+from ui.health_tab import HealthTab
 
 # --- Application Constants ---
 APP_WIDTH = 1200

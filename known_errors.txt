@@ -1,0 +1,4 @@
+Analytics "day" tab only shows one chart, with no data.
+Analytics "day" tab 'hour by day' chart is just the first hour I started studying, with 240 minutes on it.
+    Maybe an error related to it being a repeatedly edited manual session, not timed.
+Analytics stress vs. study time doesn't show up for any section

@@ -3,10 +3,10 @@
 import customtkinter as ctk
 from tkinter import messagebox
 from tkcalendar import DateEntry
-from datetime import date, timedelta
+from datetime import timedelta
 from datetime import date
 import calendar
-import database_manager as db
+from core import database_manager as db
 
 
 class CustomFactorsWindow(ctk.CTkToplevel):
