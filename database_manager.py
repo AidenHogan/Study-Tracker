@@ -4,6 +4,8 @@ import sqlite3
 import os
 import sys
 from contextlib import contextmanager
+from datetime import datetime
+import pandas as pd
 
 
 def get_db_path():
@@ -38,44 +40,224 @@ def setup_database():
         cursor.execute('''
                        CREATE TABLE IF NOT EXISTS sessions
                        (
-                           id INTEGER PRIMARY KEY AUTOINCREMENT,
-                           tag TEXT NOT NULL,
-                           start_time TEXT NOT NULL,
-                           end_time TEXT NOT NULL,
-                           duration_seconds INTEGER NOT NULL,
-                           notes TEXT
+                           id
+                           INTEGER
+                           PRIMARY
+                           KEY
+                           AUTOINCREMENT,
+                           tag
+                           TEXT
+                           NOT
+                           NULL,
+                           start_time
+                           TEXT
+                           NOT
+                           NULL,
+                           end_time
+                           TEXT
+                           NOT
+                           NULL,
+                           duration_seconds
+                           INTEGER
+                           NOT
+                           NULL,
+                           notes
+                           TEXT
                        )
                        ''')
 
         cursor.execute('''
                        CREATE TABLE IF NOT EXISTS tags
                        (
-                           name TEXT PRIMARY KEY NOT NULL,
-                           color TEXT DEFAULT '#3b8ed0'
+                           name
+                           TEXT
+                           PRIMARY
+                           KEY
+                           NOT
+                           NULL,
+                           color
+                           TEXT
+                           DEFAULT
+                           '#3b8ed0',
+                           category_name
+                           TEXT,
+                           FOREIGN
+                           KEY
+                       (
+                           category_name
+                       ) REFERENCES categories
+                       (
+                           name
+                       )
+                           )
+                       ''')
+
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS categories
+                       (
+                           name
+                           TEXT
+                           PRIMARY
+                           KEY
+                           NOT
+                           NULL
                        )
                        ''')
 
         cursor.execute('''
                        CREATE TABLE IF NOT EXISTS health_metrics
                        (
-                           date TEXT PRIMARY KEY,
-                           sleep_score INTEGER,
-                           resting_hr INTEGER,
-                           body_battery INTEGER,
-                           pulse_ox REAL,
-                           respiration REAL,
-                           sleep_duration_seconds INTEGER
+                           date
+                           TEXT
+                           PRIMARY
+                           KEY,
+                           sleep_score
+                           INTEGER,
+                           resting_hr
+                           INTEGER,
+                           body_battery
+                           INTEGER,
+                           pulse_ox
+                           REAL,
+                           respiration
+                           REAL,
+                           sleep_duration_seconds
+                           INTEGER,
+                           avg_stress
+                           INTEGER
                        )
+                       ''')
+
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS activities
+                       (
+                           id
+                           INTEGER
+                           PRIMARY
+                           KEY
+                           AUTOINCREMENT,
+                           activity_type
+                           TEXT
+                           NOT
+                           NULL,
+                           start_time
+                           TEXT
+                           NOT
+                           NULL
+                           UNIQUE,
+                           duration_seconds
+                           INTEGER
+                           NOT
+                           NULL,
+                           distance
+                           REAL,
+                           calories
+                           INTEGER
+                       )
+                       ''')
+
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS pomodoro_sessions
+                       (
+                           id
+                           INTEGER
+                           PRIMARY
+                           KEY
+                           AUTOINCREMENT,
+                           session_type
+                           TEXT
+                           NOT
+                           NULL,
+                           start_time
+                           TEXT
+                           NOT
+                           NULL,
+                           end_time
+                           TEXT
+                           NOT
+                           NULL,
+                           duration_seconds
+                           INTEGER
+                           NOT
+                           NULL,
+                           task_title
+                           TEXT,
+                           task_description
+                           TEXT,
+                           main_session_id
+                           INTEGER,
+                           FOREIGN
+                           KEY
+                       (
+                           main_session_id
+                       ) REFERENCES sessions
+                       (
+                           id
+                       )
+                           )
+                       ''')
+        # Inside the setup_database function, after the other CREATE TABLE statements...
+
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS custom_factors
+                       (
+                           name
+                           TEXT
+                           PRIMARY
+                           KEY,
+                           start_date
+                           TEXT
+                           NOT
+                           NULL
+                       )
+                       ''')
+
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS custom_factor_log
+                       (
+                           id
+                           INTEGER
+                           PRIMARY
+                           KEY
+                           AUTOINCREMENT,
+                           factor_name
+                           TEXT
+                           NOT
+                           NULL,
+                           date
+                           TEXT
+                           NOT
+                           NULL,
+                           value
+                           INTEGER
+                           NOT
+                           NULL,
+                           FOREIGN
+                           KEY
+                       (
+                           factor_name
+                       ) REFERENCES custom_factors
+                       (
+                           name
+                       ) ON DELETE CASCADE,
+                           UNIQUE
+                       (
+                           factor_name,
+                           date
+                       )
+                           )
                        ''')
 
         _add_column_if_not_exists(cursor, 'sessions', 'notes', 'TEXT')
         _add_column_if_not_exists(cursor, 'tags', 'color', "TEXT DEFAULT '#3b8ed0'")
+        _add_column_if_not_exists(cursor, 'pomodoro_sessions', 'main_session_id', 'INTEGER')
+        _add_column_if_not_exists(cursor, 'tags', 'category_name', 'TEXT')
+        _add_column_if_not_exists(cursor, 'health_metrics', 'avg_stress', 'INTEGER')
 
         conn.commit()
 
 
 def _add_column_if_not_exists(cursor, table_name, column_name, column_type):
-    """Helper function to add a column to a table if it doesn't exist."""
     cursor.execute(f"PRAGMA table_info({table_name})")
     columns = [col[1] for col in cursor.fetchall()]
     if column_name not in columns:
@@ -89,25 +271,59 @@ def fetch_all(query, params=()):
         cursor.execute(query, params)
         return cursor.fetchall()
 
+
 def fetch_one(query, params=()):
     with db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query, params)
         return cursor.fetchone()
 
-def execute_query(query, params=()):
+
+def execute_query(query, params=(), fetch_last_id=False):
     with db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query, params)
         conn.commit()
+        if fetch_last_id:
+            return cursor.lastrowid
+
+
+# --- Category Management ---
+def get_categories():
+    return fetch_all("SELECT name FROM categories ORDER BY name")
+
+
+def add_category(name):
+    try:
+        execute_query("INSERT INTO categories (name) VALUES (?)", (name,))
+        return True, ""
+    except sqlite3.IntegrityError:
+        return False, f"Category '{name}' already exists."
+
+
+def delete_category(name):
+    execute_query("UPDATE tags SET category_name = NULL WHERE category_name = ?", (name,))
+    execute_query("DELETE FROM categories WHERE name = ?", (name,))
+
+
+def update_tag_category(tag_name, category_name):
+    cat_name_or_null = category_name if category_name and category_name != "None" else None
+    execute_query("UPDATE tags SET category_name = ? WHERE name = ?", (cat_name_or_null, tag_name))
 
 
 # --- Tag Management ---
+def get_tags_with_colors_and_categories():
+    query = "SELECT name, color, category_name FROM tags ORDER BY name"
+    return fetch_all(query)
+
+
 def get_tags():
     return fetch_all("SELECT name FROM tags ORDER BY name")
 
+
 def get_tags_with_colors():
     return fetch_all("SELECT name, color FROM tags ORDER BY name")
+
 
 def add_tag(tag_name):
     try:
@@ -116,8 +332,10 @@ def add_tag(tag_name):
     except sqlite3.IntegrityError:
         return False, f"Tag '{tag_name}' already exists."
 
+
 def delete_tag(tag_name):
     execute_query("DELETE FROM tags WHERE name = ?", (tag_name,))
+
 
 def update_tag_color(tag_name, color):
     execute_query("UPDATE tags SET color = ? WHERE name = ?", (color, tag_name))
@@ -127,30 +345,154 @@ def update_tag_color(tag_name, color):
 def get_session_by_id(session_id):
     return fetch_one("SELECT tag, start_time, end_time, notes FROM sessions WHERE id = ?", (session_id,))
 
+
 def update_session(session_id, tag, start, end, duration, notes):
     params = (tag, start.isoformat(), end.isoformat(), int(duration), notes, session_id)
     execute_query("UPDATE sessions SET tag=?, start_time=?, end_time=?, duration_seconds=?, notes=? WHERE id=?", params)
 
+
 def add_session(tag, start, end, duration, notes):
     params = (tag, start.isoformat(), end.isoformat(), int(duration), notes)
-    execute_query("INSERT INTO sessions (tag, start_time, end_time, duration_seconds, notes) VALUES (?, ?, ?, ?, ?)",
-                  params)
+    query = "INSERT INTO sessions (tag, start_time, end_time, duration_seconds, notes) VALUES (?, ?, ?, ?, ?)"
+    return execute_query(query, params, fetch_last_id=True)
+
 
 def delete_session(session_id):
+    execute_query("DELETE FROM pomodoro_sessions WHERE main_session_id = ?", (session_id,))
     execute_query("DELETE FROM sessions WHERE id = ?", (session_id,))
 
 
-# --- Health Data Management ---
-def add_or_replace_health_metric(date, score, rhr, bb, spo2, resp, sleep_sec):
-    params = (date, score, rhr, bb, spo2, resp, sleep_sec)
-    execute_query("""
-        INSERT OR REPLACE INTO health_metrics
-        (date, sleep_score, resting_hr, body_battery, pulse_ox, respiration, sleep_duration_seconds)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, params)
+# --- Pomodoro Session Management ---
+def get_pomodoro_session_by_id(pomo_id):
+    query = "SELECT p.task_title, p.task_description, p.main_session_id, s.tag FROM pomodoro_sessions p LEFT JOIN sessions s ON p.main_session_id = s.id WHERE p.id = ?"
+    return fetch_one(query, (pomo_id,))
+
+
+def update_pomodoro_session(pomo_id, title, desc, tag):
+    execute_query("UPDATE pomodoro_sessions SET task_title=?, task_description=? WHERE id=?", (title, desc, pomo_id))
+    session_data = fetch_one("SELECT main_session_id FROM pomodoro_sessions WHERE id=?", (pomo_id,))
+    if session_data and session_data[0] is not None:
+        main_session_id = session_data[0]
+        execute_query("UPDATE sessions SET tag=? WHERE id=?", (tag, main_session_id))
+
+
+def delete_pomodoro_session(pomo_id):
+    session_data = fetch_one("SELECT main_session_id FROM pomodoro_sessions WHERE id=?", (pomo_id,))
+    if session_data and session_data[0] is not None:
+        main_session_id = session_data[0]
+        execute_query("DELETE FROM sessions WHERE id=?", (main_session_id,))
+    execute_query("DELETE FROM pomodoro_sessions WHERE id=?", (pomo_id,))
+
+
+def add_pomodoro_session(session_type, start, end, duration, task_title, task_description, main_session_id=None):
+    params = (session_type, start.isoformat(), end.isoformat(), int(duration), task_title, task_description,
+              main_session_id)
+    execute_query(
+        "INSERT INTO pomodoro_sessions (session_type, start_time, end_time, duration_seconds, task_title, task_description, main_session_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        params)
+
+
+def get_todays_pomodoro_sessions():
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    query = "SELECT p.id, p.session_type, p.duration_seconds, p.task_title, p.start_time, p.task_description, t.color FROM pomodoro_sessions p LEFT JOIN sessions s ON p.main_session_id = s.id LEFT JOIN tags t ON s.tag = t.name WHERE date(p.start_time) = ? ORDER BY p.start_time DESC"
+    return fetch_all(query, (today_str,))
+
+
+# --- Analytics Queries ---
+def get_time_by_category(where_clause, params):
+    query = f"SELECT IFNULL(t.category_name, 'Uncategorized'), SUM(s.duration_seconds) FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY IFNULL(t.category_name, 'Uncategorized')"
+    return fetch_all(query, params)
+
+
+def get_numerical_analytics(start_date, end_date, where_clause, params):
+    query = f"SELECT s.duration_seconds, date(s.start_time) as session_date, s.tag, IFNULL(t.category_name, 'Uncategorized') as category FROM sessions s JOIN tags t ON s.tag = t.name {where_clause}"
+    with db.db_connection() as conn:
+        df = pd.read_sql_query(query, conn, params=params)
+    if df.empty: return None
+    total_seconds = df['duration_seconds'].sum()
+    num_sessions = len(df)
+    num_days_worked = df['session_date'].nunique()
+    daily_avg_seconds = total_seconds / num_days_worked if num_days_worked > 0 else 0
+    avg_session_seconds = df['duration_seconds'].mean()
+    longest_session_seconds = df['duration_seconds'].max()
+    category_breakdown = df.groupby('category')['duration_seconds'].sum().to_dict()
+    top_tag = df.groupby('tag')['duration_seconds'].sum().idxmax() if not df.empty else "N/A"
+    daily_totals = df.groupby('session_date')['duration_seconds'].sum()
+    most_productive_day = daily_totals.idxmax() if not daily_totals.empty else "N/A"
+    most_productive_day_seconds = daily_totals.max() if not daily_totals.empty else 0
+    return {"total_seconds": total_seconds, "daily_avg_seconds": daily_avg_seconds, "num_sessions": num_sessions,
+            "num_days_worked": num_days_worked, "avg_session_seconds": avg_session_seconds,
+            "longest_session_seconds": longest_session_seconds, "category_breakdown": category_breakdown,
+            "top_tag": top_tag, "most_productive_day": most_productive_day,
+            "most_productive_day_seconds": most_productive_day_seconds}
+
+
+# --- Health & Activity Data Management ---
+def add_or_replace_health_metric(date, score, rhr, bb, spo2, resp, sleep_sec, stress):
+    params = (date, score, rhr, bb, spo2, resp, sleep_sec, stress)
+    execute_query(
+        "INSERT OR REPLACE INTO health_metrics (date, sleep_score, resting_hr, body_battery, pulse_ox, respiration, sleep_duration_seconds, avg_stress) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        params)
+
 
 def add_manual_sleep_entry(date_str, duration_seconds):
-     execute_query("""
-        INSERT OR REPLACE INTO health_metrics (date, sleep_duration_seconds)
-        VALUES (?, ?)
-    """, (date_str, duration_seconds))
+    execute_query("INSERT OR REPLACE INTO health_metrics (date, sleep_duration_seconds) VALUES (?, ?)",
+                  (date_str, duration_seconds))
+
+
+def add_activity(activity_type, start_time, duration_seconds, distance, calories):
+    params = (activity_type, start_time.isoformat(), duration_seconds, distance, calories)
+    # Using INSERT OR IGNORE to prevent duplicates based on the UNIQUE start_time
+    execute_query(
+        "INSERT OR IGNORE INTO activities (activity_type, start_time, duration_seconds, distance, calories) VALUES (?, ?, ?, ?, ?)",
+        params)
+
+# --- Custom Factor Management ---
+
+def get_custom_factors():
+    """Retrieves the names of all custom factors."""
+    return fetch_all("SELECT name FROM custom_factors ORDER BY name")
+
+
+def add_custom_factor(name, start_date):
+    """Adds a new factor and sets its initial 'true' state from the start date."""
+    try:
+        execute_query("INSERT INTO custom_factors (name, start_date) VALUES (?, ?)", (name, start_date.isoformat()))
+        # Set the initial state to 1 (true) on the start date. The correlation engine will forward-fill this.
+        set_factor_override(name, start_date, 1)
+        return True, ""
+    except sqlite3.IntegrityError:
+        return False, f"Factor '{name}' already exists."
+
+
+def delete_custom_factor(name):
+    """Deletes a factor and all its associated log entries via CASCADE."""
+    execute_query("DELETE FROM custom_factors WHERE name = ?", (name,))
+
+
+def set_factor_override(factor_name, date_obj, value):
+    """Inserts or updates a factor's value for a specific day."""
+    params = (factor_name, date_obj.isoformat(), value)
+    execute_query("INSERT OR REPLACE INTO custom_factor_log (factor_name, date, value) VALUES (?, ?, ?)", params)
+
+
+def get_factor_overrides_for_month(factor_name, year, month):
+    """Gets all explicit overrides for a factor in a given month."""
+    month_str = f"{year}-{month:02d}"
+    query = "SELECT date, value FROM custom_factor_log WHERE factor_name = ? AND strftime('%Y-%m', date) = ?"
+    return fetch_all(query, (factor_name, month_str))
+
+
+def get_factor_status_for_date(factor_name, date_obj):
+    """
+    Determines if a factor was 'active' (1) or 'inactive' (0) on a specific date.
+    It checks the factor's start date and finds the most recent override.
+    """
+    factor_info = fetch_one("SELECT start_date FROM custom_factors WHERE name = ?", (factor_name,))
+    if not factor_info or date_obj < datetime.fromisoformat(factor_info[0]).date():
+        return None  # Factor didn't exist yet
+
+    query = "SELECT value FROM custom_factor_log WHERE factor_name = ? AND date <= ? ORDER BY date DESC LIMIT 1"
+    last_status = fetch_one(query, (factor_name, date_obj.isoformat()))
+
+    return last_status[0] if last_status is not None else None

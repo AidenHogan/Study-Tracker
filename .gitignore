@@ -10,3 +10,13 @@ __pycache__/
 # Ignore the database file
 *.db
 
+#Ignore virtual Environment
+.venv/
+venv/
+*.venv
+
+#Ignore the executable file
+*.exe
+
+# Ignore IDE settings
+.idea/

@@ -6,6 +6,65 @@ from datetime import datetime, timedelta
 import database_manager as db
 
 
+class PomodoroEditWindow(ctk.CTkToplevel):
+    def __init__(self, master, pomo_id):
+        super().__init__(master)
+        self.master_app = master
+        self.pomo_id = pomo_id
+
+        self.title("Edit Pomodoro Log")
+        self.geometry("400x400")
+        self.transient(master)
+        self.grab_set()
+        self.grid_columnconfigure(1, weight=1)
+
+        # --- Widgets ---
+        ctk.CTkLabel(self, text="Subject Tag:").grid(row=0, column=0, padx=20, pady=(20, 5), sticky="w")
+        tag_values = [tag[0] for tag in db.get_tags()]
+        self.tag_combobox = ctk.CTkComboBox(self, values=tag_values)
+        self.tag_combobox.grid(row=0, column=1, padx=20, pady=(20, 5), sticky="ew")
+
+        ctk.CTkLabel(self, text="Task Title:").grid(row=1, column=0, padx=20, pady=5, sticky="w")
+        self.title_entry = ctk.CTkEntry(self)
+        self.title_entry.grid(row=1, column=1, padx=20, pady=5, sticky="ew")
+
+        ctk.CTkLabel(self, text="Description:").grid(row=2, column=0, padx=20, pady=5, sticky="nw")
+        self.desc_textbox = ctk.CTkTextbox(self, height=150)
+        self.desc_textbox.grid(row=2, column=1, padx=20, pady=5, sticky="ew")
+
+        ctk.CTkButton(self, text="Save Changes", command=self.save_data).grid(row=3, column=1, padx=20, pady=(20, 5),
+                                                                              sticky="ew")
+
+        self.load_data()
+
+    def load_data(self):
+        record = db.get_pomodoro_session_by_id(self.pomo_id)
+        if not record:
+            messagebox.showerror("Error", "Could not find session data.", parent=self)
+            self.destroy()
+            return
+
+        title, desc, main_session_id, tag = record
+        self.title_entry.insert(0, title or "")
+        if desc:
+            self.desc_textbox.insert("1.0", desc)
+        if tag:
+            self.tag_combobox.set(tag)
+
+    def save_data(self):
+        new_tag = self.tag_combobox.get()
+        new_title = self.title_entry.get()
+        new_desc = self.desc_textbox.get("1.0", "end-1c").strip()
+
+        if not all([new_tag, new_title]):
+            messagebox.showerror("Error", "Tag and Title are required.", parent=self)
+            return
+
+        db.update_pomodoro_session(self.pomo_id, new_title, new_desc, new_tag)
+        self.master_app.update_all_displays()
+        self.destroy()
+
+
 class SessionEditWindow(ctk.CTkToplevel):
     def __init__(self, master, session_id=None):
         super().__init__(master)
@@ -38,10 +97,13 @@ class SessionEditWindow(ctk.CTkToplevel):
         self.notes_textbox = ctk.CTkTextbox(self, height=150)
         self.notes_textbox.grid(row=4, column=1, padx=20, pady=5, sticky="ew")
 
-        ctk.CTkButton(self, text="Save", command=self.save_session).grid(row=5, column=1, padx=20, pady=(20, 5), sticky="ew")
+        ctk.CTkButton(self, text="Save", command=self.save_session).grid(row=5, column=1, padx=20, pady=(20, 5),
+                                                                         sticky="ew")
 
-        if self.session_id: self.load_session_data()
-        else: self.date_entry.insert(0, datetime.now().strftime('%Y-%m-%d'))
+        if self.session_id:
+            self.load_session_data()
+        else:
+            self.date_entry.insert(0, datetime.now().strftime('%Y-%m-%d'))
 
     def load_session_data(self):
         record = db.get_session_by_id(self.session_id)
@@ -73,8 +135,10 @@ class SessionEditWindow(ctk.CTkToplevel):
 
             duration_seconds = (end_datetime - start_datetime).total_seconds()
 
-            if self.session_id: db.update_session(self.session_id, tag, start_datetime, end_datetime, duration_seconds, notes)
-            else: db.add_session(tag, start_datetime, end_datetime, duration_seconds, notes)
+            if self.session_id:
+                db.update_session(self.session_id, tag, start_datetime, end_datetime, duration_seconds, notes)
+            else:
+                db.add_session(tag, start_datetime, end_datetime, duration_seconds, notes)
 
             self.master_app.update_all_displays()
             self.destroy()
@@ -86,58 +150,123 @@ class TagManagementWindow(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
         self.master_app = master
-        self.title("Manage Tags")
-        self.geometry("350x400")
+        self.title("Manage Tags & Categories")
+        self.geometry("700x500")  # Increased size
         self.transient(master)
         self.grab_set()
+        self.grid_columnconfigure(1, weight=1)  # Two main columns
+        self.grid_rowconfigure(0, weight=1)
 
-        self.tag_list_frame = ctk.CTkScrollableFrame(self, label_text="Saved Tags")
-        self.tag_list_frame.pack(fill="both", expand=True, padx=15, pady=15)
+        # --- Categories Panel (Left) ---
+        category_panel = ctk.CTkFrame(self)
+        category_panel.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        category_panel.grid_rowconfigure(0, weight=1)
+        category_panel.grid_columnconfigure(0, weight=1)
 
-        self.entry_frame = ctk.CTkFrame(self)
-        self.entry_frame.pack(fill="x", padx=15, pady=(0, 15))
-        self.entry_frame.columnconfigure(0, weight=1)
+        self.category_list_frame = ctk.CTkScrollableFrame(category_panel, label_text="Categories")
+        self.category_list_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
 
-        self.new_tag_entry = ctk.CTkEntry(self.entry_frame, placeholder_text="New tag name")
+        cat_entry_frame = ctk.CTkFrame(category_panel)
+        cat_entry_frame.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+        cat_entry_frame.columnconfigure(0, weight=1)
+        self.new_cat_entry = ctk.CTkEntry(cat_entry_frame, placeholder_text="New category name")
+        self.new_cat_entry.grid(row=0, column=0, padx=(0, 5), sticky="ew")
+        ctk.CTkButton(cat_entry_frame, text="Add", width=50, command=self.add_category).grid(row=0, column=1)
+
+        # --- Tags Panel (Right) ---
+        tags_panel = ctk.CTkFrame(self)
+        tags_panel.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
+        tags_panel.grid_rowconfigure(0, weight=1)
+        tags_panel.grid_columnconfigure(0, weight=1)
+
+        self.tag_list_frame = ctk.CTkScrollableFrame(tags_panel, label_text="Tags")
+        self.tag_list_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+
+        tag_entry_frame = ctk.CTkFrame(tags_panel)
+        tag_entry_frame.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+        tag_entry_frame.columnconfigure(0, weight=1)
+        self.new_tag_entry = ctk.CTkEntry(tag_entry_frame, placeholder_text="New tag name")
         self.new_tag_entry.grid(row=0, column=0, padx=(0, 5), sticky="ew")
-        ctk.CTkButton(self.entry_frame, text="Add", width=50, command=self.add_tag).grid(row=0, column=1)
+        ctk.CTkButton(tag_entry_frame, text="Add", width=50, command=self.add_tag).grid(row=0, column=1)
+
+        self.refresh_all()
+
+    def refresh_all(self):
+        self.load_categories()
         self.load_tags()
+        self.master_app.update_all_displays()
+
+    def load_categories(self):
+        for widget in self.category_list_frame.winfo_children(): widget.destroy()
+        self.categories = [row[0] for row in db.get_categories()]
+        for cat_name in self.categories:
+            frame = ctk.CTkFrame(self.category_list_frame)
+            frame.pack(fill="x", pady=2)
+            frame.columnconfigure(0, weight=1)
+            ctk.CTkLabel(frame, text=cat_name).grid(row=0, column=0, padx=5, sticky="w")
+            ctk.CTkButton(frame, text="Del", width=40, fg_color="#db524b", hover_color="#b0423d",
+                          command=lambda n=cat_name: self.delete_category(n)).grid(row=0, column=1, padx=5, pady=5)
 
     def load_tags(self):
         for widget in self.tag_list_frame.winfo_children(): widget.destroy()
-        for tag, color in db.get_tags_with_colors():
+        category_options = ["None"] + self.categories
+
+        for tag, color, category in db.get_tags_with_colors_and_categories():
             frame = ctk.CTkFrame(self.tag_list_frame)
-            frame.pack(fill="x", pady=2);
+            frame.pack(fill="x", pady=2)
             frame.columnconfigure(1, weight=1)
+
             color_swatch = ctk.CTkButton(frame, text="", fg_color=color, width=30, height=30,
                                          command=lambda t=tag, c=color: self.change_color(t, c))
             color_swatch.grid(row=0, column=0, padx=5, pady=5)
-            ctk.CTkLabel(frame, text=tag).grid(row=0, column=1, padx=5, sticky="w")
-            ctk.CTkButton(frame, text="Del", width=40, fg_color="#db524b", hover_color="#b0423d",
-                          command=lambda t=tag: self.delete_tag(t)).grid(row=0, column=2, padx=5, pady=5)
 
-    def change_color(self, tag_name, old_color):
-        new_color = colorchooser.askcolor(initialcolor=old_color, title=f"Select color for {tag_name}")
-        if new_color and new_color[1]:
-            db.update_tag_color(tag_name, new_color[1])
-            self.load_tags();
-            self.master_app.update_all_displays()
+            ctk.CTkLabel(frame, text=tag).grid(row=0, column=1, padx=5, sticky="w")
+
+            cat_combo = ctk.CTkComboBox(frame, values=category_options, width=120,
+                                        command=lambda cat, t=tag: self.assign_category(t, cat))
+            cat_combo.set(category if category else "None")
+            cat_combo.grid(row=0, column=2, padx=5, pady=5)
+
+            ctk.CTkButton(frame, text="Del", width=40, fg_color="#db524b", hover_color="#b0423d",
+                          command=lambda t=tag: self.delete_tag(t)).grid(row=0, column=3, padx=5, pady=5)
+
+    def add_category(self):
+        cat_name = self.new_cat_entry.get()
+        if not cat_name: return
+        success, message = db.add_category(cat_name)
+        if success:
+            self.new_cat_entry.delete(0, 'end')
+            self.refresh_all()
+        else:
+            messagebox.showwarning("Duplicate", message, parent=self)
+
+    def delete_category(self, name):
+        db.delete_category(name)
+        self.refresh_all()
+
+    def assign_category(self, tag_name, category_name):
+        db.update_tag_category(tag_name, category_name)
+        self.refresh_all()  # Refresh to ensure data consistency
 
     def add_tag(self):
         new_tag = self.new_tag_entry.get()
         if not new_tag: return
         success, message = db.add_tag(new_tag)
         if success:
-            self.new_tag_entry.delete(0, 'end');
-            self.load_tags();
-            self.master_app.update_tag_combobox()
+            self.new_tag_entry.delete(0, 'end')
+            self.refresh_all()
         else:
             messagebox.showwarning("Duplicate", message, parent=self)
 
     def delete_tag(self, tag_name):
-        db.delete_tag(tag_name);
-        self.load_tags();
-        self.master_app.update_tag_combobox()
+        db.delete_tag(tag_name)
+        self.refresh_all()
+
+    def change_color(self, tag_name, old_color):
+        new_color = colorchooser.askcolor(initialcolor=old_color, title=f"Select color for {tag_name}")
+        if new_color and new_color[1]:
+            db.update_tag_color(tag_name, new_color[1])
+            self.refresh_all()
 
 
 class ManualHealthEntryWindow(ctk.CTkToplevel):
