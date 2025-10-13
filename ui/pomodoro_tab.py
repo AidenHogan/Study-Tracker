@@ -2,7 +2,7 @@
 
 import customtkinter as ctk
 from tkinter import messagebox
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from plyer import notification
 from playsound import playsound
@@ -22,6 +22,8 @@ class PomodoroTab(ctk.CTkFrame):
         self.pomo_sessions_done = 0
         self.pomo_start_time = None
         self.pomo_paused_seconds = 0
+        self.pomo_pause_start_time = None
+        self.pomo_total_paused_duration = timedelta(0)
         self.enable_notifications = ctk.BooleanVar(value=True)
 
         # --- UI Setup ---
@@ -140,7 +142,12 @@ class PomodoroTab(ctk.CTkFrame):
             self.pomo_state = "Paused"
             if self.pomo_timer_job: self.after_cancel(self.pomo_timer_job)
             self.pomo_toggle_button.configure(text="Resume")
+            self.pomo_pause_start_time = datetime.now()
         elif self.pomo_state == "Paused":  # Resume the timer
+            if self.pomo_pause_start_time:
+                pause_duration = datetime.now() - self.pomo_pause_start_time
+                self.pomo_total_paused_duration += pause_duration
+                self.pomo_pause_start_time = None
             self.pomo_seconds_left = self.pomo_paused_seconds
             if self.pomo_sessions_done % int(self.pomo_sessions_goal.get() or 4) == 0 and self.pomo_sessions_done > 0:
                 self.pomo_state = "Break"
@@ -179,7 +186,8 @@ class PomodoroTab(ctk.CTkFrame):
 
     def _finish_pomodoro_session(self):
         end_time = datetime.now()
-        duration = (end_time - self.pomo_start_time).total_seconds()
+        raw_duration = end_time - self.pomo_start_time
+        duration = (raw_duration - self.pomo_total_paused_duration).total_seconds()
         task_title = self.pomo_task_entry.get()
         task_desc = self.pomo_task_desc.get("1.0", "end-1c").strip()
 
@@ -194,6 +202,10 @@ class PomodoroTab(ctk.CTkFrame):
             db.add_pomodoro_session("Work", self.pomo_start_time, end_time, duration, task_title, task_desc,
                                     main_session_id)
             self.pomo_sessions_done += 1
+
+            self.pomo_task_entry.delete(0, 'end')
+            self.pomo_task_desc.delete("1.0", 'end')
+
             self.master_app.update_all_displays()
         else:
             prev_session_was_work_num = self.pomo_sessions_done
@@ -239,13 +251,13 @@ class PomodoroTab(ctk.CTkFrame):
             self.pomo_status_label.configure(text=f"Work Session {self.pomo_sessions_done + 1} of {sessions_goal}")
             if self.pomo_sessions_done > 0 or not last_state_was_work:
                 self._send_notification("Back to Work!", f"Time to focus for {duration_mins} minutes. You can do it!")
-            self.pomo_task_entry.delete(0, 'end')
-            self.pomo_task_desc.delete("1.0", 'end')
 
         self.pomo_seconds_left = duration_mins * 60
         mins, secs = divmod(self.pomo_seconds_left, 60)
         self.pomo_time_display.configure(text=f"{mins:02d}:{secs:02d}")
         self.pomo_start_time = datetime.now()
+        self.pomo_total_paused_duration = timedelta(0)
+        self.pomo_pause_start_time = None
         self.pomo_toggle_button.configure(text="Pause", fg_color="#db524b", hover_color="#b0423d")
         self.pomo_timer_job = self.after(1000, self.update_pomodoro_display)
 

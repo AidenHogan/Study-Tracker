@@ -14,6 +14,8 @@ COL_PULSE_OX_ALT = 'Pulse Ox'
 COL_RESPIRATION = 'Avg. Respiration Rate'
 COL_RESPIRATION_ALT = 'Respiration'
 COL_AVG_STRESS = 'Avg. Stress'
+COL_AVG_STRESS_ALT = 'Avg. Stress Level'
+COL_AVG_STRESS_SIMPLE = 'Stress'
 
 # Sentinel values often found in Garmin data for missing entries.
 GARMIN_NAN_VALUES = ['--', 'nan', 'None']
@@ -116,8 +118,7 @@ def import_garmin_csv(filepath):
             spo2=_to_float_or_none(row.get(COL_PULSE_OX) or row.get(COL_PULSE_OX_ALT)),
             resp=_to_float_or_none(row.get(COL_RESPIRATION) or row.get(COL_RESPIRATION_ALT)),
             sleep_sec=duration_seconds,
-            stress=_to_int_or_none(row.get(COL_AVG_STRESS))
-        )
+            stress=_to_int_or_none(row.get(COL_AVG_STRESS) or row.get(COL_AVG_STRESS_ALT) or row.get(COL_AVG_STRESS_SIMPLE))        )
         imported_count += 1
 
     if imported_count == 0:

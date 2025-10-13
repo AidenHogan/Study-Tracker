@@ -497,3 +497,35 @@ def get_factor_status_for_date(factor_name, date_obj):
 
     return last_status[0] if last_status is not None else None
 
+
+def get_hourly_breakdown_for_day(day_iso_str, where_clause, params):
+    """
+    Calculates the total study minutes for each hour of a given day,
+    correctly handling sessions that span multiple hours.
+    """
+    query = f"SELECT start_time, end_time FROM sessions s JOIN tags t ON s.tag = t.name {where_clause}"
+
+    with db_connection() as conn:
+        sessions = pd.read_sql_query(query, conn, params=params, parse_dates=['start_time', 'end_time'])
+
+    hourly_totals = {f"{h:02d}": 0 for h in range(24)}
+    if sessions.empty:
+        return pd.DataFrame(list(hourly_totals.items()), columns=['hour', 'minutes'])
+
+    for _, session in sessions.iterrows():
+        start = session['start_time']
+        end = session['end_time']
+
+        current = start
+        while current < end:
+            hour_start = current.replace(minute=0, second=0, microsecond=0)
+            next_hour_start = hour_start + timedelta(hours=1)
+
+            overlap_end = min(end, next_hour_start)
+            duration_in_hour = (overlap_end - current).total_seconds()
+
+            hourly_totals[current.strftime('%H')] += duration_in_hour / 60.0
+
+            current = next_hour_start
+
+    return pd.DataFrame(list(hourly_totals.items()), columns=['hour', 'minutes'])

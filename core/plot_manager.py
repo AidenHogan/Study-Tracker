@@ -82,9 +82,30 @@ def create_weekly_bar_chart(df, time_range):
 
 
 def create_correlation_scatter_plot(df, x_col, y_col, title, xlabel, ylabel):
-    if df.empty or df[x_col].isnull().all() or df[y_col].isnull().all(): return None
+    # If data is missing, create a chart with a text message instead of returning None
+    if df.empty or x_col not in df.columns or y_col not in df.columns or df[x_col].isnull().all() or df[
+        y_col].isnull().all():
+        fig, ax = _setup_base_chart(title)
+        ax.text(0.5, 0.5, "Not enough data to display plot",
+                horizontalalignment='center', verticalalignment='center',
+                transform=ax.transAxes, color=TEXT_COLOR)
+        return fig
+    plot_df = df[[x_col, y_col]].dropna()
+
+    if plot_df.empty:
+        fig, ax = _setup_base_chart(title)
+        ax.text(0.5, 0.5, "Not enough overlapping data to plot",
+                horizontalalignment='center', verticalalignment='center',
+                transform=ax.transAxes, color=TEXT_COLOR)
+        return fig
+
     fig, ax = _setup_base_chart(title, xlabel=xlabel, ylabel=ylabel)
-    ax.scatter(df[x_col], df[y_col])
+    # Plot using the cleaned and aligned data
+    ax.scatter(plot_df[x_col], plot_df[y_col])
+    return fig
+
+    fig, ax = _setup_base_chart(title, xlabel=xlabel, ylabel=ylabel)
+    ax.scatter(df[x_col].dropna(), df[y_col].dropna())  # Use dropna() for safety
     return fig
 
 

@@ -3,7 +3,7 @@
 import customtkinter as ctk
 import pandas as pd
 from tkinter import filedialog, messagebox
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from dateutil.relativedelta import relativedelta
 import os
 
@@ -162,25 +162,66 @@ class AnalyticsTab(ctk.CTkFrame):
         renderer = page_renderers.get(self.page)
         if renderer: renderer(start_date, end_date, where_clause, params)
 
+    # In ui/analytics_tab.py, find the _render_overview_page function and replace it with this updated version.
+
     def _render_overview_page(self, start_date, end_date, where_clause, params):
         time_range_str = self.view_mode.get()
 
-        query1 = f"SELECT s.tag, SUM(s.duration_seconds), t.color FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY s.tag"
-        pm.embed_figure_in_frame(pm.create_pie_chart(db.fetch_all(query1, params), time_range_str), self.chart_frame_tl)
+        # --- Special layout for "Day" view ---
+        if time_range_str == "Day":
+            # TOP LEFT: Time by Subject (Pie Chart)
+            query1 = f"SELECT s.tag, SUM(s.duration_seconds), t.color FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY s.tag"
+            pm.embed_figure_in_frame(pm.create_pie_chart(db.fetch_all(query1, params), time_range_str),
+                                     self.chart_frame_tl)
 
-        query2 = f"SELECT strftime('%Y-%m-%d', s.start_time) as day, SUM(s.duration_seconds)/60.0 as minutes FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY day ORDER BY day"
-        pm.embed_figure_in_frame(
-            pm.create_daily_bar_chart(pd.DataFrame(db.fetch_all(query2, params), columns=['day', 'minutes']),
-                                      time_range_str), self.chart_frame_tr)
+            # TOP RIGHT: Detailed Session List (Replaces daily bar chart)
+            self.chart_frame_tr.configure(fg_color=("#DBDBDB", "#2B2B2B"))
+            ctk.CTkLabel(self.chart_frame_tr, text="Session Log", font=ctk.CTkFont(size=16, weight="bold")).pack(
+                anchor="w", padx=10, pady=(10, 5))
+            log_frame = ctk.CTkScrollableFrame(self.chart_frame_tr, fg_color="transparent")
+            log_frame.pack(fill="both", expand=True, padx=5)
 
-        query3 = f"SELECT strftime('%H', s.start_time) as hour, SUM(s.duration_seconds)/60.0 as minutes FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY hour ORDER BY hour"
-        pm.embed_figure_in_frame(
-            pm.create_hourly_bar_chart(pd.DataFrame(db.fetch_all(query3, params), columns=['hour', 'minutes']),
-                                       time_range_str), self.chart_frame_bl)
+            day_sessions_query = f"SELECT s.tag, s.start_time, s.end_time, s.duration_seconds FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} ORDER BY s.start_time"
+            day_sessions = db.fetch_all(day_sessions_query, params)
+            if not day_sessions:
+                ctk.CTkLabel(log_frame, text="No sessions logged.").pack(anchor="w", padx=10)
+            else:
+                for tag, start, end, duration in day_sessions:
+                    start_dt = datetime.fromisoformat(start)
+                    end_dt = datetime.fromisoformat(end)
+                    duration_str = str(timedelta(seconds=int(duration)))
+                    log_text = f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')} ({duration_str}) - {tag}"
+                    ctk.CTkLabel(log_frame, text=log_text).pack(anchor="w", padx=10)
 
-        pm.embed_figure_in_frame(
-            pm.create_category_pie_chart(db.get_time_by_category(where_clause, params), time_range_str),
-            self.chart_frame_br)
+            # BOTTOM LEFT: Hourly breakdown (using new function)
+            hourly_df = db.get_hourly_breakdown_for_day(start_date.isoformat(), where_clause, params)
+            pm.embed_figure_in_frame(pm.create_hourly_bar_chart(hourly_df, time_range_str), self.chart_frame_bl)
+
+            # BOTTOM RIGHT: Time by Category
+            pm.embed_figure_in_frame(
+                pm.create_category_pie_chart(db.get_time_by_category(where_clause, params), self.chart_frame_br),
+                self.chart_frame_br)
+
+        # --- Standard layout for all other views ---
+        else:
+            query1 = f"SELECT s.tag, SUM(s.duration_seconds), t.color FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY s.tag"
+            pm.embed_figure_in_frame(pm.create_pie_chart(db.fetch_all(query1, params), time_range_str),
+                                     self.chart_frame_tl)
+
+            query2 = f"SELECT strftime('%Y-%m-%d', s.start_time) as day, SUM(s.duration_seconds)/60.0 as minutes FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY day ORDER BY day"
+            pm.embed_figure_in_frame(
+                pm.create_daily_bar_chart(pd.DataFrame(db.fetch_all(query2, params), columns=['day', 'minutes']),
+                                          time_range_str), self.chart_frame_tr)
+
+            # NOTE: This still uses the old, less accurate query for broader ranges where precision is less critical.
+            query3 = f"SELECT strftime('%H', s.start_time) as hour, SUM(s.duration_seconds)/60.0 as minutes FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY hour ORDER BY hour"
+            pm.embed_figure_in_frame(
+                pm.create_hourly_bar_chart(pd.DataFrame(db.fetch_all(query3, params), columns=['hour', 'minutes']),
+                                           time_range_str), self.chart_frame_bl)
+
+            pm.embed_figure_in_frame(
+                pm.create_category_pie_chart(db.get_time_by_category(where_clause, params), time_range_str),
+                self.chart_frame_br)
 
     def _render_health_correlation_page(self, start_date, end_date, where_clause, params):
         # *** BUG FIX: Removed .reset_index() as it's now handled in the database manager ***
