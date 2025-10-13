@@ -1,11 +1,13 @@
 # file: main_app.py
 
+import os
 import customtkinter as ctk
 from tkinter import messagebox, filedialog
 
 # --- Local Module Imports ---
 # Import the database manager first as it's a core dependency
 from core import database_manager as db, data_importer, activity_importer
+from core import garmin_downloader
 
 # Import data handling modules
 
@@ -18,6 +20,7 @@ from ui.tracker_tab import TrackerTab
 from ui.pomodoro_tab import PomodoroTab
 from ui.analytics_tab import AnalyticsTab
 from ui.health_tab import HealthTab
+
 
 # --- Application Constants ---
 APP_WIDTH = 1200
@@ -43,8 +46,27 @@ class StudyTrackerApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         # --- Initialize UI ---
+        self._setup_menu()
         self._setup_tabs()
         self.update_all_displays()
+
+    def _setup_menu(self):
+        """Create a simple menu bar with an option to sign in to Garmin for full metrics."""
+        # Use the standard tkinter Menu API (safer and more compatible than CTkMenu)
+        import tkinter as tk
+        menubar = tk.Menu(self)
+
+        # Create an "Auth" cascade for Garmin sign-in
+        auth_menu = tk.Menu(menubar, tearoff=0)
+        auth_menu.add_command(label="Sign in to Garmin (OAuth)", command=self.sign_in_garmin)
+        menubar.add_cascade(label="Garmin", menu=auth_menu)
+
+        # Attach the menu to the root window. If this fails in some packaged
+        # environments it's non-fatal and we continue without a menu bar.
+        try:
+            self.config(menu=menubar)
+        except Exception:
+            pass
 
     def _setup_tabs(self):
         """Creates the main tab view and populates it with the tab modules."""
@@ -91,6 +113,34 @@ class StudyTrackerApp(ctk.CTk):
     # --- Data Import Management ---
     # These methods handle file dialogs and call the appropriate importers.
     # They stay in the main app to coordinate a full UI refresh upon completion.
+
+    def sync_and_import_garmin_data(self):
+        """Downloads latest data from Garmin and then imports it."""
+        try:
+            # You might want to show a "loading" or "syncing" message here
+            self.health_tab.sync_button.configure(text="Syncing...", state="disabled")
+            self.update()  # Force UI update
+
+            filepath = garmin_downloader.download_health_stats(days=90)  # Download the last 90 days
+
+            if not filepath or not os.path.exists(filepath):
+                messagebox.showwarning("Download Failed", "Could not retrieve the data file from Garmin.")
+                return
+
+            count, message = data_importer.import_garmin_csv(filepath)
+            if count > 0:
+                messagebox.showinfo("Success", f"Successfully synced and imported {count} health record(s).")
+            else:
+                messagebox.showwarning("No New Data",
+                                       message or "No new health records were found in the last 90 days.")
+            self.update_all_displays()
+        except Exception as e:
+            messagebox.showerror("Sync Error",
+                                 f"Could not sync data from Garmin Connect.\nPlease ensure you are connected to the internet.\n\nError: {e}")
+        finally:
+            # Reset the button text
+            self.health_tab.sync_button.configure(text="Sync from Garmin", state="normal")
+
     def import_garmin_data(self):
         filepath = filedialog.askopenfilename(title="Select Garmin Sleep CSV", filetypes=[("CSV files", "*.csv")])
         if not filepath: return
@@ -131,6 +181,17 @@ class StudyTrackerApp(ctk.CTk):
         to the PomodoroTab, ensuring they stay in sync.
         """
         self.pomodoro_tab.update_pomo_tag_combobox(tags, current_tag)
+
+    def sign_in_garmin(self):
+        """Trigger an interactive Garmin OAuth1 login to obtain full metric access."""
+        try:
+            ok = garmin_downloader.ensure_oauth_session()
+            if ok:
+                messagebox.showinfo("Garmin Login", "Successfully signed in to Garmin. Full metrics should now be available on the next sync.")
+            else:
+                messagebox.showwarning("Garmin Login", "Could not sign in to Garmin. Please check credentials and try again.")
+        except Exception as e:
+            messagebox.showerror("Garmin Login Error", f"An error occurred during Garmin sign-in: {e}")
 
 
 if __name__ == "__main__":

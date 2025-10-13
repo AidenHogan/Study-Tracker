@@ -4,7 +4,7 @@ import sqlite3
 import os
 import sys
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 
 
@@ -119,6 +119,10 @@ def setup_database():
                            sleep_duration_seconds
                            INTEGER,
                            avg_stress
+                           INTEGER,
+                           hydration_ml
+                           REAL,
+                           intensity_minutes
                            INTEGER
                        )''')
 
@@ -240,6 +244,8 @@ def setup_database():
         _add_column_if_not_exists(cursor, 'pomodoro_sessions', 'main_session_id', 'INTEGER')
         _add_column_if_not_exists(cursor, 'tags', 'category_name', 'TEXT')
         _add_column_if_not_exists(cursor, 'health_metrics', 'avg_stress', 'INTEGER')
+        _add_column_if_not_exists(cursor, 'health_metrics', 'hydration_ml', 'REAL')
+        _add_column_if_not_exists(cursor, 'health_metrics', 'intensity_minutes', 'INTEGER')
 
         conn.commit()
 
@@ -435,10 +441,10 @@ def get_numerical_analytics(start_date, end_date, where_clause, params):
             "most_productive_day_seconds": most_productive_day_seconds}
 
 
-def add_or_replace_health_metric(date, score, rhr, bb, spo2, resp, sleep_sec, stress):
-    params = (date, score, rhr, bb, spo2, resp, sleep_sec, stress)
+def add_or_replace_health_metric(date, score, rhr, bb, spo2, resp, sleep_sec, stress, hydration_ml=None, intensity_minutes=None):
+    params = (date, score, rhr, bb, spo2, resp, sleep_sec, stress, hydration_ml, intensity_minutes)
     execute_query(
-        "INSERT OR REPLACE INTO health_metrics (date, sleep_score, resting_hr, body_battery, pulse_ox, respiration, sleep_duration_seconds, avg_stress) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO health_metrics (date, sleep_score, resting_hr, body_battery, pulse_ox, respiration, sleep_duration_seconds, avg_stress, hydration_ml, intensity_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params)
 
 

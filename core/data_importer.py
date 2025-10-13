@@ -16,6 +16,8 @@ COL_RESPIRATION_ALT = 'Respiration'
 COL_AVG_STRESS = 'Avg. Stress'
 COL_AVG_STRESS_ALT = 'Avg. Stress Level'
 COL_AVG_STRESS_SIMPLE = 'Stress'
+COL_HYDRATION = 'Hydration (mL)'
+COL_INTENSITY_MINUTES = 'Intensity Minutes'
 
 # Sentinel values often found in Garmin data for missing entries.
 GARMIN_NAN_VALUES = ['--', 'nan', 'None']
@@ -31,9 +33,10 @@ def _find_header_row(filepath):
         f.seek(0)  # Reset file pointer to the beginning
         for i, line in enumerate(f):
             # The true header contains these key columns
-            if COL_SCORE in line and COL_DURATION in line and "Bedtime" in line:
-                return i, None
-    return -1, "Could not find a valid Garmin data header in the file. Ensure the file contains 'Score', 'Duration', and 'Bedtime' columns."
+            # Updated to work with both old Garmin exports and new API-generated CSVs
+                    if COL_SCORE in line and COL_DURATION in line and (COL_DATE in line or "Bedtime" in line):
+                        return i, None
+    return -1, "Could not find a valid Garmin data header in the file. Ensure the file contains 'Score', 'Duration', and 'Date' columns."
 
 
 def _parse_duration_to_seconds(duration_str):
@@ -118,7 +121,10 @@ def import_garmin_csv(filepath):
             spo2=_to_float_or_none(row.get(COL_PULSE_OX) or row.get(COL_PULSE_OX_ALT)),
             resp=_to_float_or_none(row.get(COL_RESPIRATION) or row.get(COL_RESPIRATION_ALT)),
             sleep_sec=duration_seconds,
-            stress=_to_int_or_none(row.get(COL_AVG_STRESS) or row.get(COL_AVG_STRESS_ALT) or row.get(COL_AVG_STRESS_SIMPLE))        )
+            stress=_to_int_or_none(row.get(COL_AVG_STRESS) or row.get(COL_AVG_STRESS_ALT) or row.get(COL_AVG_STRESS_SIMPLE)),
+            hydration_ml=_to_float_or_none(row.get(COL_HYDRATION)),
+            intensity_minutes=_to_int_or_none(row.get(COL_INTENSITY_MINUTES))
+        )
         imported_count += 1
 
     if imported_count == 0:

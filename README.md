@@ -70,3 +70,30 @@ If you wish to run the project from its source code:
 ## Author
 
 * **Aiden Hogan** - *Concept & Direction*
+
+## Recent updates (Oct 2025)
+
+Summary of notable fixes and new capabilities ready for push:
+
+- Startup fix: Replaced a fragile CustomTkinter menu path with a standard `tkinter.Menu` in `main_app.py` to avoid a stack overflow crash on some Windows environments. The app now launches reliably in the packaged and development environments.
+- Garmin OAuth1 support: Added an interactive sign-in helper and a menu entry (Garmin → Sign in to Garmin (OAuth)) to obtain/persist an OAuth1-capable session so richer Garmin endpoints (DailyHydration, DailyIntensityMinutes, resting HR, SpO2, detailed body battery) can be accessed when you sign in.
+- Database schema additions: New daily health columns were prepared in the importer/db code to accept `hydration_ml` and `intensity_minutes` (these will be populated after a successful OAuth1 sync). The importer accepts both `Date` and legacy `Bedtime` CSV headers.
+- Weekly & rolling analysis: The correlation engine now includes weekly resampling and rolling-window feature engineering (week-level aggregates, 1/2/4-week rolling stats). Weekly analysis smoke-tested and returns model selection outputs.
+
+Notes and next steps before an official release:
+
+- OAuth1 runtime: To populate hydration and intensity automatically, sign in via the app menu and then run the Garmin sync. Accounts with 2FA may require a browser-based flow. If you prefer a CLI helper, see the `core/garmin_downloader` module.
+- Additional persistence: The codebase prepares for storing more Garmin Daily* stats; I recommend committing the current changes and then adding the dedicated `garmin_daily_stats` table (or extra columns) in a follow-up PR to keep changes small and reviewable.
+- Tests & docs: Unit tests and README sections for migrations and importer behavior will be added in a follow-up commit.
+
+How to push these changes
+
+1. Ensure your working tree is clean and you have committed local changes.
+
+```powershell
+git add -A
+git commit -m "Fix startup menu crash; add OAuth1 sign-in helper; prepare DB for hydration/intensity; add weekly analysis features"
+git push origin main
+```
+
+If you'd like, I can prepare a follow-up PR that adds DB migration scripts, unit tests for the importer, and a short QA checklist for the OAuth1 sign-in flow.

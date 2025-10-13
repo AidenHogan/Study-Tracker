@@ -28,18 +28,23 @@ class HealthTab(ctk.CTkFrame):
 
         ctk.CTkLabel(header_frame, text="Health & Study Correlation", font=ctk.CTkFont(size=20, weight="bold")).grid(
             row=0, column=0, sticky="w")
-        ctk.CTkButton(header_frame, text="Import Sleep CSV", command=self.app.import_garmin_data).grid(row=0, column=1,
+
+        self.sync_button = ctk.CTkButton(header_frame, text="Sync from Garmin",
+                                         command=self.app.sync_and_import_garmin_data)
+        self.sync_button.grid(row=0, column=1, padx=(20, 5))
+
+        ctk.CTkButton(header_frame, text="Import From File", command=self.app.import_garmin_data).grid(row=0, column=2,
                                                                                                        padx=(20, 5))
         ctk.CTkButton(header_frame, text="Import Activities CSV", command=self.app.import_activities_data).grid(row=0,
-                                                                                                                column=2,
+                                                                                                                column=3,
                                                                                                                 padx=(0,
                                                                                                                       5))
         ctk.CTkButton(header_frame, text="Manual Sleep Entry", command=self.app.open_manual_health_entry).grid(row=0,
-                                                                                                               column=3,
+                                                                                                               column=4,
                                                                                                                padx=(0,
                                                                                                                      5))
         ctk.CTkButton(header_frame, text="Manage Factors", command=self.app.open_custom_factors_manager).grid(row=0,
-                                                                                                              column=4,
+                                                                                                              column=5,
                                                                                                               padx=(0,
                                                                                                                     20))
 
@@ -48,7 +53,7 @@ class HealthTab(ctk.CTkFrame):
             values=["7 Days", "30 Days", "90 Days", "Year"],
             variable=self.time_range,
             command=lambda v: self.update_charts()
-        ).grid(row=0, column=5, padx=20, pady=5)
+        ).grid(row=0, column=6, padx=20, pady=5)
 
         self.charts_frame = ctk.CTkFrame(self)
         self.charts_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=10)
