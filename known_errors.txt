@@ -1,9 +1,1 @@
-Analytics stress vs. study time doesn't show up for any section - Not an error, currently a data limitation!
-
-Sync window is too small by default
-
-CCF study lag and event study window/threshold don't automatically refresh when changed
-
 Event study, quantile reg, and ccf are all a little 
-
-Contents of analytics window are squished on boot, until we change from 'overview' to something else on page 4, then it's always normal (even if we switch back)
