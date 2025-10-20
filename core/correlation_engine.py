@@ -42,6 +42,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LassoCV
 from . import database_manager as db
+import numpy as np
+from statsmodels.regression.quantile_regression import QuantReg
+from sklearn.cross_decomposition import PLSRegression
+from statsmodels.tsa.api import VAR
 
 
 # --- Constants for column names and prefixes ---
@@ -74,7 +78,19 @@ def prepare_daily_features(start_date, end_date, where_clause, params):
         study_data = pd.read_sql_query(study_query, conn, params=params, index_col='date',
                                        parse_dates=['date'])
     df['total_study_minutes'] = study_data['total_study_seconds'] / 60
-    df['total_study_minutes'] = df['total_study_minutes'].fillna(0)
+    # Do NOT impute study time globally.
+    # Treat days before the user's first recorded session as inaccessible (NaN),
+    # and only after that date fill missing study minutes with 0 (meaning no study was done).
+    try:
+        earliest_session_date = db.get_earliest_session_date()
+    except Exception:
+        earliest_session_date = None
+    if earliest_session_date is not None:
+        # Fill zeros only on/after the earliest session date within the selected range
+        mask_after_first = df.index.date >= earliest_session_date
+        df.loc[mask_after_first, 'total_study_minutes'] = df.loc[mask_after_first, 'total_study_minutes'].fillna(0)
+        # Keep NaN before the earliest session date (inaccessible)
+    # If there are no sessions at all, leave NaNs as-is
 
     # ... (rest of the function is unchanged) ...
     # --- 2. Get Health Metrics ---
@@ -158,16 +174,22 @@ def compute_rolling_features(df, windows=(7, 14, 28), min_periods=3):
     df = df.copy()
     # Ensure daily index
     df.index = pd.to_datetime(df.index)
+    
+    # Collect all new columns in a dict to avoid DataFrame fragmentation
+    new_columns = {}
 
     for w in windows:
         roll = df.rolling(window=w, min_periods=min_periods)
         for col in ['sleep_score', 'resting_hr', 'body_battery', 'avg_stress', 'total_study_minutes', 'running_minutes', 'distance', 'total_activity_minutes', 'intensity_minutes', 'hydration_ml']:
             if col in df.columns:
-                df[f'{col}_roll{w}_mean'] = roll[col].mean()
-                df[f'{col}_roll{w}_std'] = roll[col].std()
-                df[f'{col}_roll{w}_sum'] = roll[col].sum()
+                new_columns[f'{col}_roll{w}_mean'] = roll[col].mean()
+                new_columns[f'{col}_roll{w}_std'] = roll[col].std()
+                new_columns[f'{col}_roll{w}_sum'] = roll[col].sum()
                 # lag by window (previous window's mean)
-                df[f'{col}_lag{w}_mean'] = df[f'{col}_roll{w}_mean'].shift(w)
+                new_columns[f'{col}_lag{w}_mean'] = new_columns[f'{col}_roll{w}_mean'].shift(w)
+    
+    # Add all new columns at once to avoid fragmentation
+    df = pd.concat([df, pd.DataFrame(new_columns, index=df.index)], axis=1)
 
     return df
 
@@ -209,6 +231,10 @@ def run_weekly_analysis(start_date, end_date, data_method='Imputed', model_type=
 
     weekly = daily.resample('W-SUN').agg(agg_dict).dropna(how='all')
 
+    # Ensure we never pass NaN targets to models; drop weeks with NaN total_study_minutes
+    if 'total_study_minutes' in weekly.columns:
+        weekly = weekly[~weekly['total_study_minutes'].isna()]
+
     # Compute rolling features on the weekly data (so windows interpreted in weeks)
     weekly_with_rolls = compute_rolling_features(weekly, windows=(1,2,4), min_periods=1)
 
@@ -230,9 +256,13 @@ def run_weekly_analysis(start_date, end_date, data_method='Imputed', model_type=
 
     if data_method == 'Imputed':
         model_df = df[required_cols_for_model].copy()
+        # Impute only features, never the target
         for col in available_features:
             model_df[col] = model_df[col].fillna(model_df[col].mean())
+        # Drop rows where target is NaN
+        model_df = model_df.dropna(subset=[TARGET_VARIABLE])
     else:
+        # Strict: drop any rows with missing required fields (including target)
         model_df = df.dropna(subset=required_cols_for_model).copy()
 
     if model_df.shape[0] < 4:
@@ -267,9 +297,13 @@ def _prepare_model_data(df, data_method):
 
     if data_method == 'Imputed':
         model_df = df[required_cols_for_model].copy()
+        # Impute only features, never the target
         for col in available_features:
             model_df[col] = model_df[col].fillna(model_df[col].mean())
+        # Drop rows where target is NaN
+        model_df = model_df.dropna(subset=[TARGET_VARIABLE])
     else:  # Strict
+        # Drop any rows with missing required fields (including target)
         model_df = df.dropna(subset=required_cols_for_model).copy()
 
     if model_df.shape[0] < 10:
@@ -463,4 +497,243 @@ def run_weekly_efficiency_analysis(df):
         "correlation_matrix": correlation_matrix.to_string(),
         "weekly_data_preview": weekly_df.to_string(),
         "insights": insights
+    }
+
+
+# -----------------
+# Advanced analytics
+# -----------------
+
+def compute_ccf_heatmap_df(start_date, end_date, where_clause, params, lags=range(-7, 8)):
+    """Compute cross-correlations between study time and each feature across lags.
+    Positive lag means feature leads study by 'lag' days (x shifted forward).
+    Returns DataFrame with features as rows and lags as columns.
+    """
+    daily = prepare_daily_features(start_date, end_date, where_clause, params)
+    y = daily[TARGET_VARIABLE]
+    # Candidate features commonly available
+    feature_list = [
+        'sleep_score', 'avg_stress', 'sleep_duration_hours', 'body_battery',
+        'resting_hr', 'respiration', 'intensity_minutes', 'hydration_ml',
+        'total_activity_minutes', 'distance'
+    ]
+    features = [f for f in feature_list if f in daily.columns]
+    if y.isna().all() or not features:
+        return None
+    y = pd.to_numeric(y, errors='coerce')
+    res = {}
+    for f in features:
+        x = pd.to_numeric(daily[f], errors='coerce')
+        row = []
+        for lag in lags:
+            corr = y.corr(x.shift(lag))
+            row.append(0.0 if pd.isna(corr) else float(corr))
+        res[f] = row
+    ccf_df = pd.DataFrame(res, index=list(lags)).T
+    ccf_df.columns = list(lags)
+    return ccf_df
+
+
+def compute_event_study_df(start_date, end_date, where_clause, params,
+                           feature='sleep_score', shock='drop', threshold=10, window=2, baseline_window=7):
+    """Build event-study averages of study minutes around health 'shocks'.
+    shock: 'drop' (<= -threshold from baseline) or 'spike' (>= +threshold).
+    Returns DataFrame with columns ['day_offset','mean','se'].
+    """
+    daily = prepare_daily_features(start_date, end_date, where_clause, params)
+    if feature not in daily.columns or TARGET_VARIABLE not in daily.columns:
+        return None
+    df = daily[[feature, TARGET_VARIABLE]].copy()
+    df[feature] = pd.to_numeric(df[feature], errors='coerce')
+    df[TARGET_VARIABLE] = pd.to_numeric(df[TARGET_VARIABLE], errors='coerce')
+    base = df[feature].rolling(baseline_window, min_periods=baseline_window//2).mean()
+    delta = df[feature] - base
+    if shock == 'drop':
+        events = delta <= -abs(threshold)
+    else:
+        events = delta >= abs(threshold)
+    event_indices = df.index[events.fillna(False)]
+    if len(event_indices) == 0:
+        return None
+    offsets = range(-window, window + 2)  # include +window+1 to see recovery one more day
+    coll = {o: [] for o in offsets}
+    for t0 in event_indices:
+        for o in offsets:
+            t = t0 + pd.Timedelta(days=o)
+            if t in df.index:
+                val = df.at[t, TARGET_VARIABLE]
+                if pd.notna(val):
+                    coll[o].append(val)
+    rows = []
+    for o in offsets:
+        arr = np.array(coll[o])
+        if arr.size == 0:
+            mean, se = np.nan, np.nan
+        else:
+            mean = float(arr.mean())
+            se = float(arr.std(ddof=1) / np.sqrt(len(arr))) if len(arr) > 1 else 0.0
+        rows.append({"day_offset": o, "mean": mean, "se": se})
+    return pd.DataFrame(rows)
+
+
+def run_quantile_regression(start_date, end_date, where_clause, params, quantiles=(0.25, 0.5, 0.75)):
+    """Fit Quantile Regression of study time on key features across quantiles.
+    Returns dict with 'coeff_df' and text summary per quantile.
+    """
+    daily = prepare_daily_features(start_date, end_date, where_clause, params)
+    cols = [c for c in ['sleep_score', 'avg_stress', 'sleep_duration_hours', 'body_battery'] if c in daily.columns]
+    if not cols or TARGET_VARIABLE not in daily:
+        return {"error": "Not enough features for quantile regression."}
+    df = daily[cols + [TARGET_VARIABLE]].dropna().copy()
+    if df.shape[0] < 20:
+        return {"error": "Not enough data for quantile regression (need >=20 rows)."}
+    X = sm.add_constant(df[cols])
+    Y = df[TARGET_VARIABLE]
+    coeffs = {}
+    summaries = {}
+    for q in quantiles:
+        try:
+            mod = QuantReg(Y, X)
+            res = mod.fit(q=q)
+            coeffs[q] = res.params[cols]
+            summaries[q] = str(res.summary())
+        except Exception as e:
+            summaries[q] = f"QuantReg failed at q={q}: {e}"
+    coeff_df = pd.DataFrame(coeffs)
+    coeff_df.index.name = 'feature'
+    coeff_df.columns.name = 'quantile'
+    return {"model_type": "Quantile", "coeff_df": coeff_df.T, "summaries": summaries}
+
+
+def run_pls_analysis_full(start_date, end_date, where_clause, params, n_components=None, data_method='Imputed'):
+    """Run supervised PLS regression and compute VIP scores.
+    Returns dict with coefficients and VIPs.
+    """
+    daily = prepare_daily_features(start_date, end_date, where_clause, params)
+    model_df, features = _prepare_model_data(daily, data_method)
+    if features is None:
+        return model_df
+    # Data sufficiency checks specific to PLS
+    n_rows = model_df.shape[0]
+    n_feats = len(features)
+    if n_rows < 15:
+        return {"error": f"Not enough data for PLS (need >=15 rows, have {n_rows})."}
+    if n_feats < 2:
+        return {"error": f"PLS requires at least 2 feature columns with enough data (have {n_feats})."}
+    X = model_df[features].values
+    Y = model_df[[TARGET_VARIABLE]].values
+    # Ensure target has variance
+    if float(np.var(Y, ddof=0)) < 1e-8:
+        return {"error": "Study minutes have no variation in this period (all equal). PLS cannot fit."}
+    if n_components is None:
+        n_components = max(1, min(5, X.shape[1], X.shape[0]-1))
+    try:
+        pls = PLSRegression(n_components=n_components)
+        pls.fit(X, Y)
+    except Exception as e:
+        return {"error": f"PLS fitting failed: {e}. Rows={n_rows}, Features={n_feats}, n_components={n_components}."}
+    coef = pd.Series(pls.coef_.ravel(), index=features, name='coef')
+    
+    # VIP calculation (Variable Importance in Projection)
+    # Formula: VIP_j = sqrt( p * sum_h( w_jh^2 * SSY_h ) / sum_h(SSY_h) )
+    # where SSY_h is the sum of squares of Y explained by component h
+    T = pls.x_scores_       # (n_samples, n_components)
+    W = pls.x_weights_      # (n_features, n_components)
+    Q = pls.y_loadings_     # (n_targets, n_components) - for single target, shape is (1, n_components)
+    p = X.shape[1]
+    
+    # For single target, Q.shape is (1, n_components), so we flatten it
+    q = Q.ravel()  # shape: (n_components,)
+    
+    # Calculate sum of squares for Y explained by each component
+    # SSY_h = sum_i( (t_ih * q_h)^2 ) for each component h
+    s = np.sum(T ** 2, axis=0) * (q ** 2)  # shape: (n_components,)
+    total_s = np.sum(s)
+    
+    # VIP for each feature: sqrt( p * sum_h(w_jh^2 * s_h) / total_s )
+    vip = np.sqrt(p * np.sum((W ** 2) * s, axis=1) / total_s) if total_s > 0 else np.zeros(p)
+    vip_series = pd.Series(vip, index=features, name='VIP')
+    
+    return {
+        "model_type": "PLS",
+        "n_components": n_components,
+        "coefficients": coef.sort_values(key=np.abs, ascending=False),
+        "vip": vip_series.sort_values(ascending=False),
+        "diagnostics": {
+            "n_rows": n_rows,
+            "n_features": n_feats,
+            "feature_list": features
+        }
+    }
+
+
+def run_var_irf(start_date, end_date, where_clause, params, horizon=7):
+    """Fit VAR on [study, sleep, stress, sleep_hours] and return IRFs for study response to each health shock."""
+    daily = prepare_daily_features(start_date, end_date, where_clause, params)
+    cols = [c for c in [TARGET_VARIABLE, 'sleep_score', 'avg_stress', 'sleep_duration_hours'] if c in daily.columns]
+    if len(cols) < 2:
+        return {"error": "Not enough variables for VAR."}
+    df = daily[cols].dropna().copy()
+    if df.shape[0] < 40:
+        return {"error": f"Not enough data for VAR/IRF (need >=40 rows, have {df.shape[0]})."}
+    try:
+        model = VAR(df)
+        selected_lag = min(7, max(1, model.select_order(7).aic or 1))
+    except Exception:
+        selected_lag = 2
+    res = VAR(df).fit(selected_lag)
+    irf = res.irf(horizon)
+    # Monte Carlo error bands
+    try:
+        lower, upper = irf.errband_mc(repl=200, signif=0.05)
+    except Exception:
+        lower = upper = None
+    # Build response of study to each health shock
+    var_names = res.names
+    study_idx = var_names.index(TARGET_VARIABLE)
+    irf_dict = {}
+    for j, shock in enumerate(var_names):
+        if shock == TARGET_VARIABLE:
+            continue
+        series = irf.irfs[:, study_idx, j]
+        df_resp = pd.DataFrame({
+            'horizon': np.arange(len(series)),
+            'irf': series
+        })
+        if lower is not None and upper is not None:
+            df_resp['lower'] = lower[:, study_idx, j]
+            df_resp['upper'] = upper[:, study_idx, j]
+        irf_dict[f"Study ← {shock}"] = df_resp
+    return {"model_type": "IRF", "irf": irf_dict, "lag_order": res.k_ar}
+
+
+def run_hmm_states(start_date, end_date, where_clause, params, n_states=3):
+    """Fit a Gaussian HMM on standardized [study, sleep, stress] and return state sequence and summaries.
+    Requires hmmlearn; if missing, returns a helpful error.
+    """
+    try:
+        from hmmlearn.hmm import GaussianHMM
+    except Exception:
+        return {"error": "HMM requires 'hmmlearn'. Please install it (added to requirements) and retry."}
+    daily = prepare_daily_features(start_date, end_date, where_clause, params)
+    cols = [c for c in [TARGET_VARIABLE, 'sleep_score', 'avg_stress'] if c in daily.columns]
+    if len(cols) < 2:
+        return {"error": "Not enough variables for HMM."}
+    df = daily[cols].dropna().copy()
+    if df.shape[0] < 50:
+        return {"error": f"Not enough data for HMM (need >=50 rows, have {df.shape[0]})."}
+    # Standardize
+    X = (df - df.mean()) / df.std(ddof=0)
+    hmm = GaussianHMM(n_components=n_states, covariance_type='full', random_state=42, n_iter=200)
+    hmm.fit(X.values)
+    states = hmm.predict(X.values)
+    df_states = df.copy()
+    df_states['state'] = states
+    state_means = df_states.groupby('state').mean().sort_index()
+    counts = df_states['state'].value_counts().sort_index()
+    return {
+        "model_type": "HMM",
+        "n_states": n_states,
+        "state_counts": counts.to_dict(),
+        "state_means": state_means.to_string(),
     }

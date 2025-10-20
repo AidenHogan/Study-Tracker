@@ -3,6 +3,7 @@
 import customtkinter as ctk
 import pandas as pd
 from datetime import datetime, timedelta
+from tkinter import messagebox
 
 from core import database_manager as db
 from core import plot_manager as pm
@@ -26,8 +27,11 @@ class HealthTab(ctk.CTkFrame):
         header_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=10)
         header_frame.columnconfigure(5, weight=1)
 
-        ctk.CTkLabel(header_frame, text="Health & Study Correlation", font=ctk.CTkFont(size=20, weight="bold")).grid(
-            row=0, column=0, sticky="w")
+        # Title with help button
+        title_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        title_frame.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(title_frame, text="Health & Study Correlation", font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
+        ctk.CTkButton(title_frame, text="?", width=30, command=self._show_help_modal).pack(side="left", padx=(10, 0))
 
         self.sync_button = ctk.CTkButton(header_frame, text="Sync from Garmin",
                                          command=self.app.sync_and_import_garmin_data)
@@ -111,4 +115,39 @@ class HealthTab(ctk.CTkFrame):
 
         fig4 = pm.create_trends_chart(df, time_range_str)
         pm.embed_figure_in_frame(fig4, self.trends_chart)
+
+
+    def _show_help_modal(self):
+        help_text = (
+            "HEALTH & WELLNESS TAB\n\n"
+            "PURPOSE:\n"
+            "• Visualize how your health metrics relate to study time\n"
+            "• Understand patterns between sleep, stress, and productivity\n"
+            "• Track wellness trends over time\n\n"
+            "DATA SOURCES:\n"
+            "• Sync from Garmin: Download health data from your Garmin device\n"
+            "  (requires Garmin Connect account)\n"
+            "• Import from File: Upload a CSV export from Garmin Connect\n"
+            "• Import Activities: Add exercise/activity data from CSV\n"
+            "• Manual Entry: Add sleep data when you don't have a device\n\n"
+            "CHARTS:\n"
+            "• Sleep Score vs Study: Does better sleep lead to more study time?\n"
+            "• Sleep Duration vs Study: Optimal hours of sleep for productivity\n"
+            "• Stress vs Study: How does stress impact your focus?\n"
+            "• Trends Chart: Overall patterns in health and study metrics\n\n"
+            "CUSTOM FACTORS:\n"
+            "• Track habits like medication, caffeine, exercise\n"
+            "• Mark days when you took/did the factor\n"
+            "• See how these factors correlate with study time in Analytics\n\n"
+            "TIME RANGES:\n"
+            "• 7 Days: Recent patterns and quick trends\n"
+            "• 30 Days: Monthly overview for better correlations\n"
+            "• 90 Days: Seasonal patterns and long-term trends\n"
+            "• Year: Annual overview and yearly comparisons\n\n"
+            "TIPS:\n"
+            "• Sync regularly to keep data up to date\n"
+            "• Look for patterns, not just correlations\n"
+            "• Use Analytics tab for deeper statistical analysis"
+        )
+        messagebox.showinfo("Health & Wellness Help", help_text)
 

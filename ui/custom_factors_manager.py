@@ -87,6 +87,59 @@ class CustomFactorsWindow(ctk.CTkToplevel):
             self.load_factors()
             self.update_calendar_display()
 
+    def edit_factor(self, name):
+        """Open a dialog to edit the factor name and start date."""
+        factor_details = db.get_custom_factor_details(name)
+        if not factor_details:
+            messagebox.showerror("Error", f"Factor '{name}' not found.", parent=self)
+            return
+        
+        # Create edit dialog
+        edit_dialog = ctk.CTkToplevel(self)
+        edit_dialog.title(f"Edit Factor: {name}")
+        edit_dialog.geometry("400x200")
+        edit_dialog.transient(self)
+        edit_dialog.grab_set()
+        
+        # Name entry
+        ctk.CTkLabel(edit_dialog, text="Factor Name:").pack(pady=(20, 5))
+        name_entry = ctk.CTkEntry(edit_dialog, width=300)
+        name_entry.pack(pady=5)
+        name_entry.insert(0, factor_details['name'])
+        
+        # Start date entry
+        ctk.CTkLabel(edit_dialog, text="Start Date:").pack(pady=(10, 5))
+        from datetime import datetime
+        from tkcalendar import DateEntry
+        start_date = datetime.fromisoformat(factor_details['start_date']).date()
+        date_entry = DateEntry(edit_dialog, date_pattern='y-mm-dd', width=20)
+        date_entry.set_date(start_date)
+        date_entry.pack(pady=5)
+        
+        def save_changes():
+            new_name = name_entry.get().strip()
+            new_start_date = date_entry.get_date()
+            
+            if not new_name:
+                messagebox.showwarning("Input Error", "Please enter a factor name.", parent=edit_dialog)
+                return
+            
+            success, msg = db.update_custom_factor(name, new_name, new_start_date)
+            if success:
+                edit_dialog.destroy()
+                if self.selected_factor == name:
+                    self.selected_factor = new_name
+                self.load_factors()
+                self.update_calendar_display()
+            else:
+                messagebox.showerror("Database Error", msg, parent=edit_dialog)
+        
+        # Buttons
+        button_frame = ctk.CTkFrame(edit_dialog, fg_color="transparent")
+        button_frame.pack(pady=20)
+        ctk.CTkButton(button_frame, text="Save", command=save_changes).pack(side="left", padx=5)
+        ctk.CTkButton(button_frame, text="Cancel", command=edit_dialog.destroy).pack(side="left", padx=5)
+
     def load_factors(self):
         for widget in self.factor_list_frame.winfo_children():
             widget.destroy()
@@ -101,8 +154,10 @@ class CustomFactorsWindow(ctk.CTkToplevel):
             frame.bind("<Button-1>", lambda e, n=factor_name: self.select_factor(n))
             frame.winfo_children()[0].bind("<Button-1>", lambda e, n=factor_name: self.select_factor(n))
 
+            ctk.CTkButton(frame, text="Edit", width=40, fg_color="#3b7dd6", hover_color="#2e63ab",
+                          command=lambda n=factor_name: self.edit_factor(n)).grid(row=0, column=1, padx=2, pady=5)
             ctk.CTkButton(frame, text="Del", width=40, fg_color="#db524b", hover_color="#b0423d",
-                          command=lambda n=factor_name: self.delete_factor(n)).grid(row=0, column=1, padx=5, pady=5)
+                          command=lambda n=factor_name: self.delete_factor(n)).grid(row=0, column=2, padx=2, pady=5)
 
     def select_factor(self, name):
         self.selected_factor = name

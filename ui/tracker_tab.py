@@ -31,7 +31,13 @@ class TrackerTab(ctk.CTkFrame):
         left_frame = ctk.CTkFrame(self, width=400)
         left_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         left_frame.grid_propagate(False)
-        ctk.CTkLabel(left_frame, text="Timer", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(20, 10))
+        
+        # Title with help button
+        title_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
+        title_frame.pack(pady=(20, 10), fill="x", padx=20)
+        ctk.CTkLabel(title_frame, text="Timer", font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
+        ctk.CTkButton(title_frame, text="?", width=30, command=self._show_help_modal).pack(side="right")
+        
         self.time_display = ctk.CTkLabel(left_frame, text="00:00:00", font=ctk.CTkFont(size=48, family="monospace"))
         self.time_display.pack(pady=10, padx=20)
 
@@ -210,19 +216,25 @@ class TrackerTab(ctk.CTkFrame):
                                                                                                            column=i,
                                                                                                            sticky="nsew")
             self.calendar_grid.columnconfigure(i, weight=1)
-
-        for r, week in enumerate(calendar.monthcalendar(year, month), start=1):
+        # Ensure weeks start on Sunday (0=Monday, 6=Sunday) to align with our header labels
+        cal = calendar.Calendar(firstweekday=6)
+        for r, week in enumerate(cal.monthdayscalendar(year, month), start=1):
             self.calendar_grid.rowconfigure(r, weight=1)
             for c, day in enumerate(week):
-                if day == 0: continue
+                if day == 0:
+                    continue
                 day_frame = ctk.CTkFrame(self.calendar_grid, fg_color="transparent")
                 day_frame.grid(row=r, column=c, padx=2, pady=2, sticky="nsew")
                 day_frame.rowconfigure(0, weight=1)
                 day_frame.columnconfigure(0, weight=1)
 
                 is_today = (date.today() == date(year, month, day))
-                lbl_frame = ctk.CTkFrame(day_frame, corner_radius=5, border_width=2 if is_today else 0,
-                                         border_color="#3b8ed0")
+                lbl_frame = ctk.CTkFrame(
+                    day_frame,
+                    corner_radius=5,
+                    border_width=2 if is_today else 0,
+                    border_color="#3b8ed0",
+                )
                 lbl_frame.grid(row=0, column=0, sticky="nsew")
                 ctk.CTkLabel(lbl_frame, text=str(day)).pack(expand=True)
 
@@ -235,10 +247,12 @@ class TrackerTab(ctk.CTkFrame):
                         relx = 0
                         for s in sessions_by_day[day]:
                             relw = s['duration'] / total_dur
-                            ctk.CTkFrame(bar_frame, fg_color=s['color'], height=5, corner_radius=0).place(relx=relx,
-                                                                                                          rely=0,
-                                                                                                          relwidth=relw,
-                                                                                                          relheight=1)
+                            ctk.CTkFrame(
+                                bar_frame,
+                                fg_color=s['color'],
+                                height=5,
+                                corner_radius=0,
+                            ).place(relx=relx, rely=0, relwidth=relw, relheight=1)
                             relx += relw
 
     def delete_session(self, session_id):
@@ -296,6 +310,34 @@ class TrackerTab(ctk.CTkFrame):
         self.update_calendar_display()
 
     def next_month(self):
-        days_in_month = calendar.monthrange(self.current_calendar_date.year, self.current_calendar_date.month)[1]
-        self.current_calendar_date = self.current_calendar_date.replace(day=1) + timedelta(days=days_in_month)
+        last_day = calendar.monthrange(self.current_calendar_date.year, self.current_calendar_date.month)[1]
+        self.current_calendar_date = (self.current_calendar_date.replace(day=1) + timedelta(days=last_day))
         self.update_calendar_display()
+
+    def _show_help_modal(self):
+        help_text = (
+            "TRACKER TAB - Study Time Tracking\n\n"
+            "TIMER:\n"
+            "• Click 'Start' to begin tracking a study session\n"
+            "• Select a subject tag to categorize your work\n"
+            "• Timer runs until you click 'Stop'\n"
+            "• Sessions are automatically saved to your log\n\n"
+            "STRUGGLE TIMER:\n"
+            "• Use this for focused 20-minute deep work sessions\n"
+            "• Helps track productive struggle time\n"
+            "• Separate from main timer - use for specific challenges\n\n"
+            "MANUAL ENTRY:\n"
+            "• Add sessions you forgot to track\n"
+            "• Edit existing sessions to correct errors\n"
+            "• Add notes to remember what you worked on\n\n"
+            "STATS:\n"
+            "• Today's Focus: Total time tracked today\n"
+            "• This Week: Total for current week (Mon-Sun)\n"
+            "• Daily Average: Your average across all days\n"
+            "• Streaks: Consecutive days with study sessions\n\n"
+            "CALENDAR:\n"
+            "• Green days = study session logged\n"
+            "• Gray days = no session\n"
+            "• Click days to see session details"
+        )
+        messagebox.showinfo("Tracker Tab Help", help_text)

@@ -59,6 +59,7 @@ class StudyTrackerApp(ctk.CTk):
         # Create an "Auth" cascade for Garmin sign-in
         auth_menu = tk.Menu(menubar, tearoff=0)
         auth_menu.add_command(label="Sign in to Garmin (OAuth)", command=self.sign_in_garmin)
+        auth_menu.add_command(label="Update Garmin Credentials", command=self.update_garmin_credentials)
         menubar.add_cascade(label="Garmin", menu=auth_menu)
 
         # Attach the menu to the root window. If this fails in some packaged
@@ -70,8 +71,11 @@ class StudyTrackerApp(ctk.CTk):
 
     def _setup_tabs(self):
         """Creates the main tab view and populates it with the tab modules."""
+        # Use grid for the main tab view to ensure proper expansion
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
         self.tab_view = ctk.CTkTabview(self)
-        self.tab_view.pack(fill="both", expand=True, padx=10, pady=10)
+        self.tab_view.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
         # Create the container frames for each tab within the tab view
         tracker_frame = self.tab_view.add("Tracker")
@@ -81,17 +85,26 @@ class StudyTrackerApp(ctk.CTk):
 
         # Instantiate each tab class, passing the appropriate frame and a
         # reference to this main app instance (`self`) for callbacks.
+        # Ensure each tab frame expands fully
+        tracker_frame.grid_rowconfigure(0, weight=1)
+        tracker_frame.grid_columnconfigure(0, weight=1)
         self.tracker_tab = TrackerTab(tracker_frame, self)
-        self.tracker_tab.pack(fill="both", expand=True)
+        self.tracker_tab.grid(row=0, column=0, sticky="nsew")
 
+        pomodoro_frame.grid_rowconfigure(0, weight=1)
+        pomodoro_frame.grid_columnconfigure(0, weight=1)
         self.pomodoro_tab = PomodoroTab(pomodoro_frame, self)
-        self.pomodoro_tab.pack(fill="both", expand=True)
+        self.pomodoro_tab.grid(row=0, column=0, sticky="nsew")
 
+        analytics_frame.grid_rowconfigure(0, weight=1)
+        analytics_frame.grid_columnconfigure(0, weight=1)
         self.analytics_tab = AnalyticsTab(analytics_frame, self)
-        self.analytics_tab.pack(fill="both", expand=True)
+        self.analytics_tab.grid(row=0, column=0, sticky="nsew")
 
+        health_frame.grid_rowconfigure(0, weight=1)
+        health_frame.grid_columnconfigure(0, weight=1)
         self.health_tab = HealthTab(health_frame, self)
-        self.health_tab.pack(fill="both", expand=True)
+        self.health_tab.grid(row=0, column=0, sticky="nsew")
 
     # --- Pop-up Window Management ---
     # These methods remain in the main app as they are global actions.
@@ -116,12 +129,60 @@ class StudyTrackerApp(ctk.CTk):
 
     def sync_and_import_garmin_data(self):
         """Downloads latest data from Garmin and then imports it."""
+        # Show a dialog to select sync time frame
+        import tkinter as tk
+        from tkinter import simpledialog
+        
+        # Create a custom dialog for time frame selection
+        dialog = tk.Toplevel(self)
+        dialog.title("Select Sync Time Frame")
+        dialog.geometry("450x250")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        selected_option = tk.StringVar(value="smart")
+        
+        tk.Label(dialog, text="Choose how much data to sync:", font=("Arial", 12, "bold")).pack(pady=10)
+        
+        tk.Radiobutton(dialog, text="Smart sync (recommended - only fetch missing data)", 
+                      variable=selected_option, value="smart", font=("Arial", 10)).pack(anchor="w", padx=20, pady=5)
+        tk.Radiobutton(dialog, text="Last 7 days", 
+                      variable=selected_option, value="7", font=("Arial", 10)).pack(anchor="w", padx=20, pady=5)
+        tk.Radiobutton(dialog, text="Last 30 days", 
+                      variable=selected_option, value="30", font=("Arial", 10)).pack(anchor="w", padx=20, pady=5)
+        tk.Radiobutton(dialog, text="Last 90 days (full sync - slower)", 
+                      variable=selected_option, value="90", font=("Arial", 10)).pack(anchor="w", padx=20, pady=5)
+        
+        result = {"confirmed": False}
+        
+        def on_ok():
+            result["confirmed"] = True
+            result["option"] = selected_option.get()
+            dialog.destroy()
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(pady=10)
+        tk.Button(button_frame, text="OK", command=on_ok, width=10).pack(side="left", padx=5)
+        tk.Button(button_frame, text="Cancel", command=on_cancel, width=10).pack(side="left", padx=5)
+        
+        self.wait_window(dialog)
+        
+        if not result.get("confirmed"):
+            return
+        
         try:
-            # You might want to show a "loading" or "syncing" message here
             self.health_tab.sync_button.configure(text="Syncing...", state="disabled")
-            self.update()  # Force UI update
-
-            filepath = garmin_downloader.download_health_stats(days=90)  # Download the last 90 days
+            self.update()
+        
+            # Determine days parameter based on user selection
+            option = result["option"]
+            if option == "smart":
+                filepath = garmin_downloader.download_health_stats()  # Smart sync (no days param)
+            else:
+                filepath = garmin_downloader.download_health_stats(days=int(option))
 
             if not filepath or not os.path.exists(filepath):
                 messagebox.showwarning("Download Failed", "Could not retrieve the data file from Garmin.")
@@ -132,13 +193,22 @@ class StudyTrackerApp(ctk.CTk):
                 messagebox.showinfo("Success", f"Successfully synced and imported {count} health record(s).")
             else:
                 messagebox.showwarning("No New Data",
-                                       message or "No new health records were found in the last 90 days.")
+                                       message or "No new health records were found.")
             self.update_all_displays()
+        except garmin_downloader.GarthException as e:
+            # Check if it's an authentication error
+            error_msg = str(e)
+            if "credentials" in error_msg.lower() or "password" in error_msg.lower() or "auth" in error_msg.lower():
+                # Offer to update credentials
+                if messagebox.askyesno("Authentication Failed", 
+                                      f"{error_msg}\n\nWould you like to update your Garmin credentials?"):
+                    self.update_garmin_credentials()
+            else:
+                messagebox.showerror("Sync Error", f"Garmin sync error:\n\n{e}")
         except Exception as e:
             messagebox.showerror("Sync Error",
                                  f"Could not sync data from Garmin Connect.\nPlease ensure you are connected to the internet.\n\nError: {e}")
         finally:
-            # Reset the button text
             self.health_tab.sync_button.configure(text="Sync from Garmin", state="normal")
 
     def import_garmin_data(self):
@@ -192,6 +262,72 @@ class StudyTrackerApp(ctk.CTk):
                 messagebox.showwarning("Garmin Login", "Could not sign in to Garmin. Please check credentials and try again.")
         except Exception as e:
             messagebox.showerror("Garmin Login Error", f"An error occurred during Garmin sign-in: {e}")
+
+    def update_garmin_credentials(self):
+        """Open a dialog to update Garmin credentials."""
+        import tkinter as tk
+        
+        dialog = tk.Toplevel(self)
+        dialog.title("Update Garmin Credentials")
+        dialog.geometry("400x250")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        tk.Label(dialog, text="Update Your Garmin Connect Credentials", 
+                font=("Arial", 12, "bold")).pack(pady=20)
+        
+        tk.Label(dialog, text="These credentials will be saved as environment variables\nand used for future syncs.", 
+                justify="center").pack(pady=5)
+        
+        # Email
+        tk.Label(dialog, text="Garmin Email:").pack(pady=(10, 0))
+        email_entry = tk.Entry(dialog, width=40)
+        email_entry.pack(pady=5)
+        
+        # Pre-fill with current value if exists
+        current_email = os.getenv("GARMIN_EMAIL", "")
+        if current_email:
+            email_entry.insert(0, current_email)
+        
+        # Password
+        tk.Label(dialog, text="Garmin Password:").pack(pady=(10, 0))
+        password_entry = tk.Entry(dialog, width=40, show="*")
+        password_entry.pack(pady=5)
+        
+        def save_credentials():
+            email = email_entry.get().strip()
+            password = password_entry.get().strip()
+            
+            if not email or not password:
+                messagebox.showwarning("Input Error", "Please enter both email and password.", parent=dialog)
+                return
+            
+            # Set environment variables for this session
+            os.environ["GARMIN_EMAIL"] = email
+            os.environ["GARMIN_PASSWORD"] = password
+            
+            # Try to authenticate with the new credentials
+            try:
+                import garth
+                garth.login(email, password)
+                garth.save("~/.garth")
+                messagebox.showinfo("Success", 
+                                  "Credentials updated and authenticated successfully!\n\n"
+                                  "Note: These are stored for this session only.\n"
+                                  "To persist across restarts, add them to your system environment variables:\n"
+                                  "GARMIN_EMAIL and GARMIN_PASSWORD", 
+                                  parent=dialog)
+                dialog.destroy()
+            except Exception as e:
+                messagebox.showerror("Authentication Failed", 
+                                   f"Could not authenticate with the provided credentials.\n\nError: {e}", 
+                                   parent=dialog)
+        
+        # Buttons
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(pady=20)
+        tk.Button(button_frame, text="Save & Test", command=save_credentials, width=15).pack(side="left", padx=5)
+        tk.Button(button_frame, text="Cancel", command=dialog.destroy, width=15).pack(side="left", padx=5)
 
 
 if __name__ == "__main__":

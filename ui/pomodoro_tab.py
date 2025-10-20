@@ -37,7 +37,11 @@ class PomodoroTab(ctk.CTkFrame):
         left_frame.grid_columnconfigure(0, weight=1)
 
         # -- Timer Display --
-        ctk.CTkLabel(left_frame, text="Pomodoro Timer", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(20, 10))
+        title_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
+        title_frame.pack(pady=(20, 10), fill="x", padx=20)
+        ctk.CTkLabel(title_frame, text="Pomodoro Timer", font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
+        ctk.CTkButton(title_frame, text="?", width=30, command=self._show_help_modal).pack(side="right")
+        
         self.pomo_time_display = ctk.CTkLabel(left_frame, text="25:00", font=ctk.CTkFont(size=60, family="monospace"))
         self.pomo_time_display.pack(pady=10, padx=20)
         self.pomo_status_label = ctk.CTkLabel(left_frame, text="Ready to start!", font=ctk.CTkFont(size=14))
@@ -325,3 +329,39 @@ class PomodoroTab(ctk.CTkFrame):
             self.pomo_tag_combobox.set(current_tag)
         elif tags:
             self.pomo_tag_combobox.set(tags[0])
+
+    def _show_help_modal(self):
+        help_text = (
+            "POMODORO TAB - Structured Study Sessions\n\n"
+            "WHAT IS POMODORO?\n"
+            "• Work for a set time (default: 25 min)\n"
+            "• Take a short break (default: 5 min)\n"
+            "• After 4 work sessions, take a long break (default: 15 min)\n"
+            "• Helps maintain focus and prevent burnout\n\n"
+            "HOW TO USE:\n"
+            "1. Enter a task name (e.g., 'Chapter 3 Reading')\n"
+            "2. Select a subject tag\n"
+            "3. Optionally add a description\n"
+            "4. Click 'Start' to begin your first work session\n"
+            "5. When the timer ends, you'll get a notification\n"
+            "6. Break time starts automatically\n"
+            "7. After the break, start the next work session\n\n"
+            "SETTINGS:\n"
+            "• Work: Length of focus sessions (minutes)\n"
+            "• Short Break: Length of short breaks (minutes)\n"
+            "• Long Break: Length of long breaks (minutes)\n"
+            "• Sessions until Long Break: How many work sessions before a long break\n\n"
+            "CONTROLS:\n"
+            "• Start/Pause: Begin or pause the current timer\n"
+            "• Reset: Stop and clear the current session\n"
+            "• Pause: Pause without losing progress\n\n"
+            "NOTIFICATIONS:\n"
+            "• Toggle notifications on/off\n"
+            "• Get alerts when work/break sessions end\n\n"
+            "LOG:\n"
+            "• View all completed pomodoro sessions\n"
+            "• Edit work session details\n"
+            "• Delete sessions if needed\n"
+            "• Click on task name to see description"
+        )
+        messagebox.showinfo("Pomodoro Tab Help", help_text)

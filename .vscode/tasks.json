@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run app to verify TypeError fix",
+			"type": "shell",
+			"command": "& C:/Users/ameli/Desktop/StudyTrackerApp/dist/StudyTrackerGithub/.venv/Scripts/python.exe c:/Users/ameli/Desktop/StudyTrackerApp/dist/StudyTrackerGithub/main_app.py",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Run app after PLS/UI controls changes",
+			"type": "shell",
+			"command": "& C:/Users/ameli/Desktop/StudyTrackerApp/dist/StudyTrackerGithub/.venv/Scripts/python.exe c:/Users/ameli/Desktop/StudyTrackerApp/dist/StudyTrackerGithub/main_app.py",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}

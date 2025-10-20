@@ -10,6 +10,7 @@ import os
 from core import database_manager as db
 from core import plot_manager as pm
 from core import correlation_engine
+from core.plot_manager import BG_COLOR
 
 
 class AnalyticsTab(ctk.CTkFrame):
@@ -24,12 +25,21 @@ class AnalyticsTab(ctk.CTkFrame):
         self.end_date = date.today()
         self.analysis_method = ctk.StringVar(value="Strict")
         self.model_type = ctk.StringVar(value="Lasso")
+        self.analysis_type = ctk.StringVar(value="Overview")  # New: selects special analyses
+        self.event_feature = ctk.StringVar(value="sleep_score")
+        self.event_kind = ctk.StringVar(value="drop")
+        self.event_threshold = ctk.IntVar(value=10)
+        self.event_window = ctk.IntVar(value=2)
+        self.ccf_max_lag = ctk.IntVar(value=7)
         self.category_filter = ctk.StringVar(value="All Time")
 
         # --- UI Setup ---
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
         self._create_widgets()
+        # Rendering guards to avoid drawing before layout is ready
+        self._first_update_done = False
+        self._second_pass_scheduled = False
 
     def _create_widgets(self):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -57,18 +67,29 @@ class AnalyticsTab(ctk.CTkFrame):
                                command=self._on_view_mode_change).grid(row=0, column=7, padx=5)
         ctk.CTkButton(header_frame, text="Export Data", command=self.export_data).grid(row=0, column=8, padx=(20, 10))
 
-        self.charts_frame = ctk.CTkFrame(self)
+        self.charts_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.charts_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 10))
         self.charts_frame.grid_columnconfigure((0, 1), weight=1)
         self.charts_frame.grid_rowconfigure((0, 1), weight=1)
-        self.chart_frame_tl = ctk.CTkFrame(self.charts_frame)
-        self.chart_frame_tl.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-        self.chart_frame_tr = ctk.CTkFrame(self.charts_frame)
-        self.chart_frame_tr.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-        self.chart_frame_bl = ctk.CTkFrame(self.charts_frame)
-        self.chart_frame_bl.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
-        self.chart_frame_br = ctk.CTkFrame(self.charts_frame)
-        self.chart_frame_br.grid(row=1, column=1, sticky="nsew", padx=10, pady=10)
+        self.chart_frame_tl = ctk.CTkFrame(self.charts_frame, fg_color=BG_COLOR)
+        self.chart_frame_tl.grid(row=0, column=0, sticky="nsew", padx=(5, 2), pady=(5, 2))
+        self.chart_frame_tl.grid_columnconfigure(0, weight=1)
+        self.chart_frame_tl.grid_rowconfigure(0, weight=1)
+
+        self.chart_frame_tr = ctk.CTkFrame(self.charts_frame, fg_color=BG_COLOR)
+        self.chart_frame_tr.grid(row=0, column=1, sticky="nsew", padx=(8, 5), pady=(5, 2))
+        self.chart_frame_tr.grid_columnconfigure(0, weight=1)
+        self.chart_frame_tr.grid_rowconfigure(0, weight=1)
+
+        self.chart_frame_bl = ctk.CTkFrame(self.charts_frame, fg_color=BG_COLOR)
+        self.chart_frame_bl.grid(row=1, column=0, sticky="nsew", padx=(5, 2), pady=(2, 5))
+        self.chart_frame_bl.grid_columnconfigure(0, weight=1)
+        self.chart_frame_bl.grid_rowconfigure(0, weight=1)
+
+        self.chart_frame_br = ctk.CTkFrame(self.charts_frame, fg_color=BG_COLOR)
+        self.chart_frame_br.grid(row=1, column=1, sticky="nsew", padx=(8, 5), pady=(2, 5))
+        self.chart_frame_br.grid_columnconfigure(0, weight=1)
+        self.chart_frame_br.grid_rowconfigure(0, weight=1)
 
         footer_frame = ctk.CTkFrame(self, fg_color="transparent")
         footer_frame.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 10))
@@ -84,11 +105,62 @@ class AnalyticsTab(ctk.CTkFrame):
         self.analysis_controls_frame = ctk.CTkFrame(footer_frame, fg_color="transparent")
         self.analysis_controls_frame.grid(row=0, column=3, padx=(20, 0))
         ctk.CTkLabel(self.analysis_controls_frame, text="Model:").pack(side="left", padx=(0, 5))
-        ctk.CTkSegmentedButton(self.analysis_controls_frame, values=["Lasso", "PCA", "Standard", "Weekly"],
-                               variable=self.model_type, command=lambda v: self.update_charts()).pack(side="left")
+        # Dropdowns for analysis organization
+        model_menu = ctk.CTkOptionMenu(self.analysis_controls_frame, values=["Lasso", "PCA", "Standard", "Weekly", "PLS", "IRF", "HMM"],
+                                       variable=self.model_type, command=lambda v: self.update_charts())
+        model_menu.pack(side="left")
         ctk.CTkLabel(self.analysis_controls_frame, text="Data:").pack(side="left", padx=(15, 5))
         ctk.CTkSegmentedButton(self.analysis_controls_frame, values=["Strict", "Imputed"],
                                variable=self.analysis_method, command=lambda v: self.update_charts()).pack(side="left")
+        ctk.CTkLabel(self.analysis_controls_frame, text="Exploratory:").pack(side="left", padx=(15, 5))
+        analysis_menu = ctk.CTkOptionMenu(self.analysis_controls_frame, values=["Overview", "CCF", "Event Study", "Quantile"],
+                                          variable=self.analysis_type, command=lambda v: self.update_charts())
+        analysis_menu.pack(side="left")
+        # Help button and note
+        ctk.CTkButton(self.analysis_controls_frame, text="?", width=26, command=self._show_help_modal).pack(side="left", padx=(10, 0))
+        ctk.CTkLabel(self.analysis_controls_frame, text="Exploratory analyses are model-agnostic.", text_color="gray").pack(side="left", padx=(10, 0))
+        # Hide by default; only show on page 4 (index 3)
+        self.analysis_controls_frame.grid_remove()
+
+        # --- Dynamic controls for Exploratory analyses ---
+        self.exploratory_controls = ctk.CTkFrame(footer_frame, fg_color="transparent")
+        self.exploratory_controls.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(8,0))
+        # Hide by default; only show on page 4 (index 3)
+        self.exploratory_controls.grid_remove()
+
+    def _build_exploratory_controls(self):
+        for w in self.exploratory_controls.winfo_children():
+            w.destroy()
+        atype = self.analysis_type.get()
+        if atype == "Event Study":
+            # Feature selector
+            ctk.CTkLabel(self.exploratory_controls, text="Feature:").pack(side="left", padx=(0,5))
+            ctk.CTkOptionMenu(self.exploratory_controls, values=[
+                "sleep_score","avg_stress","sleep_duration_hours","body_battery",
+                "resting_hr","respiration","intensity_minutes","hydration_ml"
+            ], variable=self.event_feature, command=lambda v: self.update_charts()).pack(side="left")
+            # Shock type
+            ctk.CTkLabel(self.exploratory_controls, text="Shock:").pack(side="left", padx=(10,5))
+            ctk.CTkOptionMenu(self.exploratory_controls, values=["drop","spike"],
+                              variable=self.event_kind, command=lambda v: self.update_charts()).pack(side="left")
+            # Threshold
+            ctk.CTkLabel(self.exploratory_controls, text="Threshold:").pack(side="left", padx=(10,5))
+            thr_entry = ctk.CTkEntry(self.exploratory_controls, textvariable=self.event_threshold, width=60)
+            thr_entry.pack(side="left")
+            thr_entry.bind("<Return>", lambda e: self.update_charts())
+            thr_entry.bind("<FocusOut>", lambda e: self.update_charts())
+            # Window
+            ctk.CTkLabel(self.exploratory_controls, text="Window ±days:").pack(side="left", padx=(10,5))
+            win_entry = ctk.CTkEntry(self.exploratory_controls, textvariable=self.event_window, width=60)
+            win_entry.pack(side="left")
+            win_entry.bind("<Return>", lambda e: self.update_charts())
+            win_entry.bind("<FocusOut>", lambda e: self.update_charts())
+        elif atype == "CCF":
+            ctk.CTkLabel(self.exploratory_controls, text="Max Lag (days):").pack(side="left", padx=(0,5))
+            lag_entry = ctk.CTkEntry(self.exploratory_controls, textvariable=self.ccf_max_lag, width=60)
+            lag_entry.pack(side="left")
+            lag_entry.bind("<Return>", lambda e: self.update_charts())
+            lag_entry.bind("<FocusOut>", lambda e: self.update_charts())
 
     def _get_date_range(self):
         end = self.end_date
@@ -132,8 +204,24 @@ class AnalyticsTab(ctk.CTkFrame):
             if not isinstance(widget, ctk.CTkFrame): widget.destroy()
 
     def update_charts(self):
+        # Delay the first update until the widget is properly sized
+        if not self._first_update_done:
+            # Force a layout pass so geometry info is up-to-date
+            self.update_idletasks()
+            # Check both width and height of the charts frame to ensure it's ready
+            if self.charts_frame.winfo_width() > 150 and self.charts_frame.winfo_height() > 150:
+                self._first_update_done = True
+            else:
+                # Not ready yet, try again shortly
+                self.after(120, self.update_charts)
+                return
+
         self._clear_chart_frames()
-        for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br]: frame.grid()
+        for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br]:
+            frame.grid()
+
+        # Force an update to ensure proper layout before embedding figures
+        self.charts_frame.update_idletasks()
 
         start_date, end_date = self._get_date_range()
         if start_date == end_date:
@@ -145,8 +233,12 @@ class AnalyticsTab(ctk.CTkFrame):
 
         if self.page == 3:
             self.analysis_controls_frame.grid()
+            # Rebuild exploratory controls when modeling page is visible
+            self._build_exploratory_controls()
+            self.exploratory_controls.grid()
         else:
             self.analysis_controls_frame.grid_remove()
+            self.exploratory_controls.grid_remove()
 
         if self.category_filter.get() == "School Work":
             where_clause = "WHERE date(s.start_time) BETWEEN ? AND ? AND t.category_name = 'School Work'"
@@ -298,30 +390,189 @@ class AnalyticsTab(ctk.CTkFrame):
     def _render_modeling_page(self, start_date, end_date, where_clause, params):
         for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl,
                       self.chart_frame_br]: frame.configure(fg_color=("#DBDBDB", "#2B2B2B"))
-
-        df = correlation_engine.prepare_daily_features(start_date, end_date, where_clause, params)
         model_type = self.model_type.get()
+        analysis_type = self.analysis_type.get()
 
+        # Analysis-type specific rendering
+        if analysis_type == "CCF":
+            # Hide bottom row for single-row layouts and clear them
+            for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
+            for widget in self.chart_frame_br.winfo_children(): widget.destroy()
+            self.chart_frame_bl.grid_remove()
+            self.chart_frame_br.grid_remove()
+            
+            max_lag = max(1, int(self.ccf_max_lag.get()))
+            ccf_df = correlation_engine.compute_ccf_heatmap_df(start_date, end_date, where_clause, params, lags=range(-max_lag, max_lag+1))
+            fig = pm.create_ccf_heatmap(ccf_df)
+            if fig is None:
+                self._show_error("Not enough data to compute CCF heatmap for this range.")
+                return
+            pm.embed_figure_in_frame(fig, self.chart_frame_tl)
+            self._show_explanation(self.chart_frame_tr, "CCF heatmap: For each health metric (rows), colors show correlation with study minutes at different lags (columns). Positive lag means the health metric happens BEFORE the study day. Warm colors = positive association, cool = negative.")
+            return
+        if analysis_type == "Event Study":
+            # Hide bottom row for single-row layouts and clear them
+            for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
+            for widget in self.chart_frame_br.winfo_children(): widget.destroy()
+            self.chart_frame_bl.grid_remove()
+            self.chart_frame_br.grid_remove()
+            
+            # Controls could be added to UI later; use defaults for now
+            try:
+                win = max(1, int(self.event_window.get()))
+                thr = int(self.event_threshold.get())
+            except Exception:
+                win = 2; thr = 10
+            ev = correlation_engine.compute_event_study_df(start_date, end_date, where_clause, params,
+                                                           feature=self.event_feature.get(),
+                                                           shock=self.event_kind.get(),
+                                                           threshold=thr,
+                                                           window=win)
+            fig = pm.create_event_study_plot(ev)
+            if fig is None:
+                self._show_error("No qualifying events found or insufficient overlapping study data for the selected settings.")
+                return
+            pm.embed_figure_in_frame(fig, self.chart_frame_tl)
+            self._show_explanation(self.chart_frame_tr, "Event study: We detect sudden changes (shocks) in a health metric and average study minutes around those dates. The plot shows mean study time by day relative to the event (D-2..D+3) with error bars.")
+            return
+        if analysis_type == "Quantile":
+            # Hide bottom row for single-row layouts and clear them
+            for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
+            for widget in self.chart_frame_br.winfo_children(): widget.destroy()
+            self.chart_frame_bl.grid_remove()
+            self.chart_frame_br.grid_remove()
+            
+            resq = correlation_engine.run_quantile_regression(start_date, end_date, where_clause, params)
+            if "error" in resq:
+                self._show_error(resq['error'])
+                return
+            fig = pm.create_quantile_coeff_plot(resq['coeff_df'])
+            pm.embed_figure_in_frame(fig, self.chart_frame_tl)
+            self._show_explanation(self.chart_frame_tr, "Quantile regression: Coefficients at different quantiles of study time (e.g., 25th/50th/75th percentiles). This shows how effects can differ on low-study vs high-study days.")
+            return
+
+        # Model selection path (uses all 4 quadrants)
+        # Ensure all frames are visible for model results (in case they were hidden by exploratory analyses)
+        self.chart_frame_bl.grid()
+        self.chart_frame_br.grid()
+        
         if model_type == "Weekly":
+            df = correlation_engine.prepare_daily_features(start_date, end_date, where_clause, params)
             results = correlation_engine.run_weekly_efficiency_analysis(df)
+        elif model_type == "PLS":
+            results = correlation_engine.run_pls_analysis_full(start_date, end_date, where_clause, params,
+                                                               data_method=self.analysis_method.get())
+        elif model_type == "IRF":
+            results = correlation_engine.run_var_irf(start_date, end_date, where_clause, params)
+        elif model_type == "HMM":
+            results = correlation_engine.run_hmm_states(start_date, end_date, where_clause, params)
         else:
             results = correlation_engine.run_analysis(start_date, end_date, data_method=self.analysis_method.get(),
                                                       model_type=model_type)
 
         if "error" in results:
-            for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl,
-                          self.chart_frame_br]: frame.grid_remove()
-            error_label = ctk.CTkLabel(self.charts_frame, text=f"Analysis Error\n\n{results['error']}",
-                                       font=ctk.CTkFont(size=16), justify="center", wraplength=500)
-            error_label.grid(row=0, column=0, columnspan=2, rowspan=2, sticky="nsew")
+            self._show_error(results['error'])
             return
 
         display_map = {
             "Lasso": self._display_lasso_results, "PCA": self._display_pca_results,
-            "Standard": self._display_standard_results, "Weekly Efficiency": self._display_weekly_results
+            "Standard": self._display_standard_results, "Weekly Efficiency": self._display_weekly_results,
+            "PLS": self._display_pls_results, "IRF": self._display_irf_results, "HMM": self._display_hmm_results
         }
         display_func = display_map.get(results.get("model_type"))
-        if display_func: display_func(results)
+        if display_func:
+            display_func(results)
+        else:
+            self._show_error("Unknown result type")
+
+    def _show_error(self, msg):
+        for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br]:
+            frame.grid_remove()
+        error_label = ctk.CTkLabel(self.charts_frame, text=f"Analysis Error\n\n{msg}",
+                                   font=ctk.CTkFont(size=16), justify="center", wraplength=500)
+        error_label.grid(row=0, column=0, columnspan=2, rowspan=2, sticky="nsew")
+
+    def _display_pls_results(self, results):
+        # Top-left: Coefficients
+        ctk.CTkLabel(self.chart_frame_tl, text="PLS Coefficients", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=10, pady=(10,5))
+        txt = ctk.CTkTextbox(self.chart_frame_tl, wrap="none"); txt.pack(fill="both", expand=True, padx=10, pady=5)
+        coef_series = results.get('coefficients', pd.Series(dtype=float))
+        if isinstance(coef_series, pd.Series) and not coef_series.empty:
+            txt.insert("1.0", coef_series.to_string())
+        else:
+            txt.insert("1.0", "No coefficient data available.")
+        txt.configure(state="disabled")
+        
+        # Top-right: VIP Scores
+        ctk.CTkLabel(self.chart_frame_tr, text="PLS VIP Scores", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=10, pady=(10,5))
+        txt2 = ctk.CTkTextbox(self.chart_frame_tr, wrap="none"); txt2.pack(fill="both", expand=True, padx=10, pady=5)
+        vip_series = results.get('vip', pd.Series(dtype=float))
+        if isinstance(vip_series, pd.Series) and not vip_series.empty:
+            txt2.insert("1.0", vip_series.to_string())
+        else:
+            txt2.insert("1.0", "No VIP data available.")
+        txt2.configure(state="disabled")
+        
+        # Bottom-right: Data Diagnostics
+        ctk.CTkLabel(self.chart_frame_br, text="Data Diagnostics", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=10, pady=(10,5))
+        diag_frame = ctk.CTkScrollableFrame(self.chart_frame_br, fg_color="transparent")
+        diag_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Show diagnostic info
+        n_comp = results.get('n_components', 'N/A')
+        ctk.CTkLabel(diag_frame, text=f"Components used: {n_comp}", anchor="w").pack(anchor="w", padx=10, pady=2)
+        
+        if 'diagnostics' in results:
+            diag = results['diagnostics']
+            ctk.CTkLabel(diag_frame, text=f"Total rows after preprocessing: {diag.get('n_rows', 'N/A')}", anchor="w").pack(anchor="w", padx=10, pady=2)
+            ctk.CTkLabel(diag_frame, text=f"Features available: {diag.get('n_features', 'N/A')}", anchor="w").pack(anchor="w", padx=10, pady=2)
+            if 'feature_list' in diag:
+                ctk.CTkLabel(diag_frame, text=f"Features used:", anchor="w", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(5,2))
+                for feat in diag['feature_list']:
+                    ctk.CTkLabel(diag_frame, text=f"  • {feat}", anchor="w", text_color="gray").pack(anchor="w", padx=20, pady=1)
+        
+        # Bottom-left: Explanation
+        self._show_explanation(self.chart_frame_bl, "PLS (Partial Least Squares): Supervised dimensionality reduction—components are chosen to best predict study time. Coefficients show the direction/strength; VIP scores rank overall importance.")
+
+    def _display_irf_results(self, results):
+        fig = pm.create_irf_plot(results.get('irf'))
+        pm.embed_figure_in_frame(fig, self.chart_frame_tl)
+        ctk.CTkLabel(self.chart_frame_tr, text=f"VAR Lag Order: {results.get('lag_order')}").pack(anchor="w", padx=10, pady=10)
+        self._show_explanation(self.chart_frame_bl, "IRF (Impulse Response): Shows how a one-time change in a health metric is followed by changes in study minutes over the next days. Shaded bands indicate uncertainty when available.")
+
+    def _display_hmm_results(self, results):
+        ctk.CTkLabel(self.chart_frame_tl, text="HMM State Means", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=10, pady=(10,5))
+        txt = ctk.CTkTextbox(self.chart_frame_tl, wrap="none"); txt.pack(fill="both", expand=True, padx=10, pady=5)
+        txt.insert("1.0", results.get('state_means', '')); txt.configure(state="disabled")
+        ctk.CTkLabel(self.chart_frame_tr, text="HMM State Counts").pack(anchor="w", padx=10, pady=10)
+        txt2 = ctk.CTkTextbox(self.chart_frame_tr, wrap="none"); txt2.pack(fill="both", expand=True, padx=10, pady=5)
+        txt2.insert("1.0", str(results.get('state_counts', {}))); txt2.configure(state="disabled")
+        self._show_explanation(self.chart_frame_bl, "HMM (Hidden Markov Model): Groups days into latent states (e.g., high/neutral/low productivity) based on patterns in study and health; shows typical values and how often each state occurs.")
+
+    def _show_explanation(self, frame, text):
+        # Place a wrapped label with gray text below the main chart/text
+        lbl = ctk.CTkLabel(frame, text=text, wraplength=300, justify="left", text_color="gray")
+        lbl.pack(anchor="w", padx=10, pady=10)
+
+    def _show_help_modal(self):
+        help_text = (
+            "Exploratory (model-agnostic):\n"
+            "• CCF: Correlation between each health metric and study minutes across day lags.\n"
+            "• Event Study: Average study around sudden changes in a health metric.\n"
+            "• Quantile Regression: Effects at different percentiles of study time.\n\n"
+            "Models:\n"
+            "• Standard: Ordinary Least Squares regression.\n"
+            "• Lasso: Feature selection via L1 regularization.\n"
+            "• PCA: Unsupervised components (variance in features).\n"
+            "• PLS: Supervised components that best predict study time.\n"
+            "• Weekly: Aggregates to weeks before modeling.\n"
+            "• IRF: Dynamic responses from a VAR model (needs more data).\n"
+            "• HMM: Latent productivity states (requires hmmlearn).\n\n"
+            "Notes:\n"
+            "• Exploratory analyses do not depend on the selected model.\n"
+            "• Pre-first-session days are excluded from plots (treated as inaccessible)."
+        )
+        messagebox.showinfo("Analytics Help", help_text)
 
     def _display_standard_results(self, results):
         ctk.CTkLabel(self.chart_frame_tl, text="Significant Factors", font=ctk.CTkFont(size=16, weight="bold")).pack(
@@ -359,8 +610,8 @@ class AnalyticsTab(ctk.CTkFrame):
         explanation_frame = ctk.CTkScrollableFrame(self.chart_frame_br, fg_color="transparent");
         explanation_frame.pack(fill="both", expand=True, padx=5)
         explanation = "This analysis uses a Multiple Linear Regression model.\n\nSignificant Factors (p < 0.05):\nThese have a clear, measurable effect.\n\nInsignificant Factors (p >= 0.05):\nNo reliable pattern could be found."
-        ctk.CTkLabel(explanation_frame, text=explanation, justify="left", wraplength=250, anchor="nw").pack(anchor="w",
-                                                                                                            padx=10)
+        ctk.CTkLabel(explanation_frame, text=explanation, justify="left", wraplength=250, anchor="nw").pack(
+            anchor="w", padx=10)
 
     def _display_lasso_results(self, results):
         ctk.CTkLabel(self.chart_frame_tl, text="Selected Factors", font=ctk.CTkFont(size=16, weight="bold")).pack(
@@ -394,8 +645,8 @@ class AnalyticsTab(ctk.CTkFrame):
         explanation_frame = ctk.CTkScrollableFrame(self.chart_frame_br, fg_color="transparent");
         explanation_frame.pack(fill="both", expand=True, padx=5)
         explanation = "Lasso automatically selects the most important features.\n\nSelected Factors:\nThese have the strongest, most consistent impact on study time.\n\nEliminated Factors:\nTheir effect was too weak or redundant to be reliably measured."
-        ctk.CTkLabel(explanation_frame, text=explanation, justify="left", wraplength=250, anchor="nw").pack(anchor="w",
-                                                                                                            padx=10)
+        ctk.CTkLabel(explanation_frame, text=explanation, justify="left", wraplength=250, anchor="nw").pack(
+            anchor="w", padx=10)
 
     def _display_pca_results(self, results):
         ctk.CTkLabel(self.chart_frame_tl, text="Principal Component (PC) Significance",
@@ -440,8 +691,8 @@ class AnalyticsTab(ctk.CTkFrame):
         ctk.CTkLabel(br_scroll_frame, text="How to Read This", font=ctk.CTkFont(size=16, weight="bold")).pack(
             anchor="w", padx=10, pady=(15, 5))
         explanation = "PCA combines your metrics into abstract 'Principal Components' that capture the most information.\n\nPC Significance:\nShows if these abstract components have a statistically significant effect on study time.\n\nComponent Loadings:\nShows which of your original factors (e.g., Sleep Score) are the main ingredients in each PC."
-        ctk.CTkLabel(explanation_frame, text=explanation, justify="left", wraplength=250, anchor="nw").pack(anchor="w",
-                                                                                                            padx=10)
+        ctk.CTkLabel(br_scroll_frame, text=explanation, justify="left", wraplength=250, anchor="nw").pack(
+            anchor="w", padx=10)
 
     def _display_weekly_results(self, results):
         ctk.CTkLabel(self.chart_frame_tl, text="Weekly Data Preview", font=ctk.CTkFont(size=16, weight="bold")).pack(

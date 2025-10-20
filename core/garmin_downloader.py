@@ -15,32 +15,104 @@ COL_PULSE_OX = 'Avg. SpO2'
 COL_RESPIRATION = 'Avg. Respiration Rate'
 COL_AVG_STRESS = 'Avg. Stress'
 COL_DURATION = 'Duration'
+COL_HYDRATION = 'Hydration (mL)'
+COL_INTENSITY_MINUTES = 'Intensity Minutes'
 
 
-def download_health_stats(days=90):
+def find_missing_data_window(most_recent_date_in_db, max_days=90):
     """
-    Logs into Garmin Connect, downloads daily health stats for the past number of days,
-    and saves it as a CSV file compatible with the existing importer.
+    Uses a binary search approach to find the optimal sync window.
+    Checks if we have data at progressively smaller intervals (e.g., 45d, 22d, 11d ago)
+    and returns the number of days to fetch to fill the gap.
+    
+    Args:
+        most_recent_date_in_db: The most recent date we have data for (datetime.date or None)
+        max_days: Maximum number of days to consider (default 90)
+    
+    Returns:
+        Number of days to fetch (1 to max_days)
     """
-    try:
-        # Step 1: Try to resume a saved session. This avoids logging in every time.
-        garth.resume("~/.garth")
-    except (FileNotFoundError, GarthException):
-        # Step 2: If resuming fails, perform a full login.
-        # It reads your credentials from environment variables for security.
-        email = os.getenv("GARMIN_EMAIL")
-        password = os.getenv("GARMIN_PASSWORD")
-        if not email or not password:
-            print("Garmin credentials not found in environment variables.")
-            # Fallback to asking the user directly if variables aren't set.
-            garth.login(input("Email: "), input("Password: "))
-        else:
-            garth.login(email, password)
-        # Save the session so we can use resume() next time.
-        garth.save("~/.garth")
+    if most_recent_date_in_db is None:
+        # No data in DB, fetch the full window
+        return max_days
+    
+    today = date.today()
+    days_since_last = (today - most_recent_date_in_db).days
+    
+    # If we have data from today or yesterday, just fetch the last few days
+    if days_since_last <= 1:
+        return 7  # Fetch a week to catch any updates
+    
+    # If the gap is larger than max_days, fetch max_days
+    if days_since_last >= max_days:
+        return max_days
+    
+    # Otherwise, fetch from the day after the most recent date
+    # Add a small buffer (3 days) to catch any late-arriving data
+    return min(days_since_last + 3, max_days)
+
+
+def download_health_stats(days=None, start_date_override=None):
+    """
+    Logs into Garmin Connect, downloads daily health stats, and saves as CSV.
+    
+    Args:
+        days: Number of days to fetch (if None, will be calculated intelligently)
+        start_date_override: Explicit start date (overrides days calculation)
+    
+    Returns:
+        Path to the saved CSV file, or raises exception on auth failure
+    """
+    auth_attempts = 0
+    max_auth_attempts = 2
+    
+    while auth_attempts < max_auth_attempts:
+        try:
+            # Step 1: Try to resume a saved session. This avoids logging in every time.
+            garth.resume("~/.garth")
+            break  # Success, exit the auth loop
+        except (FileNotFoundError, GarthException) as e:
+            auth_attempts += 1
+            try:
+                # Step 2: If resuming fails, perform a full login.
+                email = os.getenv("GARMIN_EMAIL")
+                password = os.getenv("GARMIN_PASSWORD")
+                if not email or not password:
+                    # Raise exception to let the UI handle credential input
+                    raise GarthException("GARMIN_EMAIL and GARMIN_PASSWORD environment variables not set. Please configure credentials.")
+                
+                print(f"Login attempt {auth_attempts}...")
+                garth.login(email, password)
+                garth.save("~/.garth")
+                break  # Success, exit the auth loop
+            except GarthException as login_error:
+                # Check if it's an authentication error
+                error_msg = str(login_error).lower()
+                if "auth" in error_msg or "login" in error_msg or "password" in error_msg or "credentials" in error_msg:
+                    if auth_attempts >= max_auth_attempts:
+                        # Out of attempts, raise with clear message
+                        raise GarthException("Authentication failed. Your Garmin credentials may be incorrect or have changed. Please update your GARMIN_EMAIL and GARMIN_PASSWORD.") from login_error
+                    # Try again on next iteration
+                    print(f"Authentication failed, retrying... ({auth_attempts}/{max_auth_attempts})")
+                else:
+                    # Different error, re-raise
+                    raise
 
     end_date = date.today()
-    start_date = end_date - timedelta(days=days - 1)
+    
+    # Determine the start date based on what we already have in the DB
+    if start_date_override:
+        start_date = start_date_override
+    elif days is not None:
+        start_date = end_date - timedelta(days=days - 1)
+    else:
+        # Smart sync: check DB and only fetch what's missing
+        from . import database_manager as db
+        most_recent = db.get_most_recent_health_date()
+        calculated_days = find_missing_data_window(most_recent)
+        start_date = end_date - timedelta(days=calculated_days - 1)
+        print(f"Smart sync: Last data in DB from {most_recent}, fetching {calculated_days} days")
+    
     print(f"Fetching Garmin data from {start_date} to {end_date}...")
 
     # This dictionary will hold the data we successfully fetch.
@@ -165,7 +237,9 @@ def download_health_stats(days=90):
         'avgSPO2': COL_PULSE_OX,
         'averageRespirationValue': COL_RESPIRATION,
         'averageStressLevel': COL_AVG_STRESS,
-        'sleepDurationStr': COL_DURATION
+        'sleepDurationStr': COL_DURATION,
+        'hydration_ml': COL_HYDRATION,
+        'intensity_minutes': COL_INTENSITY_MINUTES
     })
 
     # Step 7: Save the final data to a CSV file in the user's home directory.

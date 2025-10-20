@@ -9,3 +9,4 @@ statsmodels
 patsy
 tkcalendar
 garth
+hmmlearn

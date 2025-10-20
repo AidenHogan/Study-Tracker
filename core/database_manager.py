@@ -17,6 +17,34 @@ def get_db_path():
     return os.path.join(application_path, 'study_sessions.db')
 
 
+def get_most_recent_health_date():
+    """
+    Returns the most recent date in the health_metrics table as a datetime.date object,
+    or None if the table is empty.
+    """
+    with db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT MAX(date) FROM health_metrics")
+        result = cursor.fetchone()
+        if result and result[0]:
+            return datetime.strptime(result[0], '%Y-%m-%d').date()
+        return None
+
+
+def get_earliest_session_date():
+    """
+    Returns the earliest session date in the sessions table as a datetime.date object,
+    or None if the table is empty.
+    """
+    with db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT MIN(date(start_time)) FROM sessions")
+        result = cursor.fetchone()
+        if result and result[0]:
+            return datetime.strptime(result[0], '%Y-%m-%d').date()
+        return None
+
+
 DB_PATH = get_db_path()
 
 
@@ -397,9 +425,23 @@ def get_health_and_study_data(start_date, end_date, where_clause, params):
         health_df = pd.read_sql_query(health_query, conn, params=health_params, index_col='date')
         study_df = pd.read_sql_query(study_query, conn, params=study_params, index_col='date')
 
-    # *** BUG FIX: Use an 'outer' join to keep all dates from both datasets ***
+    # Ensure indices are DatetimeIndex for proper comparisons/join behavior
+    if not health_df.empty:
+        health_df.index = pd.to_datetime(health_df.index)
+    if not study_df.empty:
+        study_df.index = pd.to_datetime(study_df.index)
+
+    # *** Use an 'outer' join to keep all dates, but do NOT force zeros before first study date ***
     df = health_df.join(study_df, how='outer')
-    df['total_study_minutes'] = df['total_study_minutes'].fillna(0)
+    try:
+        earliest = get_earliest_session_date()
+    except Exception:
+        earliest = None
+    if earliest is not None:
+        # df index is DatetimeIndex; earliest is date -> convert to Timestamp for compare
+        mask = df.index >= pd.to_datetime(earliest)
+        df.loc[mask, 'total_study_minutes'] = df.loc[mask, 'total_study_minutes'].fillna(0)
+        # Leave NaN values before earliest session date so plots can drop them
 
     # Turn the date index into a column for plotting
     df = df.reset_index()
@@ -469,6 +511,14 @@ def get_custom_factors():
     return fetch_all("SELECT name FROM custom_factors ORDER BY name")
 
 
+def get_custom_factor_details(name):
+    """Get the details of a custom factor including start date."""
+    result = fetch_one("SELECT name, start_date FROM custom_factors WHERE name = ?", (name,))
+    if result:
+        return {"name": result[0], "start_date": result[1]}
+    return None
+
+
 def add_custom_factor(name, start_date):
     try:
         execute_query("INSERT INTO custom_factors (name, start_date) VALUES (?, ?)", (name, start_date.isoformat()))
@@ -476,6 +526,29 @@ def add_custom_factor(name, start_date):
         return True, ""
     except sqlite3.IntegrityError:
         return False, f"Factor '{name}' already exists."
+
+
+def update_custom_factor(old_name, new_name, new_start_date):
+    """Update a custom factor's name and/or start date."""
+    try:
+        # If renaming, check if the new name already exists
+        if old_name != new_name:
+            existing = fetch_one("SELECT name FROM custom_factors WHERE name = ?", (new_name,))
+            if existing:
+                return False, f"Factor '{new_name}' already exists."
+        
+        # Update the factor
+        execute_query("UPDATE custom_factors SET name = ?, start_date = ? WHERE name = ?", 
+                     (new_name, new_start_date.isoformat(), old_name))
+        
+        # If the name changed, update all log entries
+        if old_name != new_name:
+            execute_query("UPDATE custom_factor_log SET factor_name = ? WHERE factor_name = ?", 
+                         (new_name, old_name))
+        
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 
 
 def delete_custom_factor(name):
