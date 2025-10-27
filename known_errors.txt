@@ -17,3 +17,5 @@ only consider data starting from 4 weeks ago.
 
 Can only filter by category : school work
 Need to allow for more robust filtering, based on users specific categories
+
+Time by category day tab on the first analytics page (Piechart) displays: "Time by category" (desired) followed by "(.!ctktabview.ctkframe3." ... [ect])
