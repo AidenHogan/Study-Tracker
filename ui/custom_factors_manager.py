@@ -189,7 +189,10 @@ class CustomFactorsWindow(ctk.CTkToplevel):
 
         monthly_overrides = db.get_factor_overrides_for_month(self.selected_factor, year, month)
 
-        for i, day_name in enumerate(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]):
+        # Use calendar's configured first weekday so labels line up with monthcalendar()
+        first = calendar.firstweekday()  # 0 = Monday
+        day_names = [calendar.day_abbr[(first + i) % 7] for i in range(7)]
+        for i, day_name in enumerate(day_names):
             ctk.CTkLabel(self.calendar_grid, text=day_name, font=ctk.CTkFont(size=12, weight="bold")).grid(row=0,
                                                                                                            column=i,
                                                                                                            sticky="nsew")
