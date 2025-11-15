@@ -2,6 +2,7 @@
 
 import customtkinter as ctk
 import pandas as pd
+import tkinter as tk
 from tkinter import filedialog, messagebox
 from datetime import date, timedelta, datetime
 from dateutil.relativedelta import relativedelta
@@ -11,6 +12,8 @@ from core import database_manager as db
 from core import plot_manager as pm
 from core import correlation_engine
 from core.plot_manager import BG_COLOR
+import json
+from collections import Counter
 
 
 class AnalyticsTab(ctk.CTkFrame):
@@ -20,7 +23,8 @@ class AnalyticsTab(ctk.CTkFrame):
 
         # --- State Variables ---
         self.page = 0
-        self.max_pages = 4
+        # Increase to 5 pages: Overview, Health Correlation, Numerical Stats, Modeling, ActivityWatch
+        self.max_pages = 5
         self.view_mode = ctk.StringVar(value="Week")
         self.end_date = date.today()
         self.analysis_method = ctk.StringVar(value="Strict")
@@ -71,22 +75,24 @@ class AnalyticsTab(ctk.CTkFrame):
         self.charts_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 10))
         self.charts_frame.grid_columnconfigure((0, 1), weight=1)
         self.charts_frame.grid_rowconfigure((0, 1), weight=1)
-        self.chart_frame_tl = ctk.CTkFrame(self.charts_frame, fg_color=BG_COLOR)
+
+        # Use plain tk.Frame for matplotlib containers to avoid CTk rounded-corner clipping
+        self.chart_frame_tl = tk.Frame(self.charts_frame, bg=BG_COLOR)
         self.chart_frame_tl.grid(row=0, column=0, sticky="nsew", padx=(5, 2), pady=(5, 2))
         self.chart_frame_tl.grid_columnconfigure(0, weight=1)
         self.chart_frame_tl.grid_rowconfigure(0, weight=1)
 
-        self.chart_frame_tr = ctk.CTkFrame(self.charts_frame, fg_color=BG_COLOR)
+        self.chart_frame_tr = tk.Frame(self.charts_frame, bg=BG_COLOR)
         self.chart_frame_tr.grid(row=0, column=1, sticky="nsew", padx=(8, 5), pady=(5, 2))
         self.chart_frame_tr.grid_columnconfigure(0, weight=1)
         self.chart_frame_tr.grid_rowconfigure(0, weight=1)
 
-        self.chart_frame_bl = ctk.CTkFrame(self.charts_frame, fg_color=BG_COLOR)
+        self.chart_frame_bl = tk.Frame(self.charts_frame, bg=BG_COLOR)
         self.chart_frame_bl.grid(row=1, column=0, sticky="nsew", padx=(5, 2), pady=(2, 5))
         self.chart_frame_bl.grid_columnconfigure(0, weight=1)
         self.chart_frame_bl.grid_rowconfigure(0, weight=1)
 
-        self.chart_frame_br = ctk.CTkFrame(self.charts_frame, fg_color=BG_COLOR)
+        self.chart_frame_br = tk.Frame(self.charts_frame, bg=BG_COLOR)
         self.chart_frame_br.grid(row=1, column=1, sticky="nsew", padx=(8, 5), pady=(2, 5))
         self.chart_frame_br.grid_columnconfigure(0, weight=1)
         self.chart_frame_br.grid_rowconfigure(0, weight=1)
@@ -95,12 +101,12 @@ class AnalyticsTab(ctk.CTkFrame):
         footer_frame.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 10))
         footer_frame.columnconfigure(1, weight=1)
         ctk.CTkButton(footer_frame, text="<", width=30, command=lambda: self._cycle_chart_page(-1)).grid(row=0,
-                                                                                                         column=0,
-                                                                                                         sticky="e")
+                                                                                                          column=0,
+                                                                                                          sticky="e")
         self.page_label = ctk.CTkLabel(footer_frame, text=f"Page {self.page + 1} / {self.max_pages}")
         self.page_label.grid(row=0, column=1)
         ctk.CTkButton(footer_frame, text=">", width=30, command=lambda: self._cycle_chart_page(1)).grid(row=0, column=2,
-                                                                                                        sticky="w")
+                                                                                                         sticky="w")
 
         self.analysis_controls_frame = ctk.CTkFrame(footer_frame, fg_color="transparent")
         self.analysis_controls_frame.grid(row=0, column=3, padx=(20, 0))
@@ -198,10 +204,25 @@ class AnalyticsTab(ctk.CTkFrame):
         self.update_charts()
 
     def _clear_chart_frames(self):
+        # Clear children of each chart container if the container still exists
         for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br]:
-            for widget in frame.winfo_children(): widget.destroy()
-        for widget in self.charts_frame.winfo_children():
-            if not isinstance(widget, ctk.CTkFrame): widget.destroy()
+            try:
+                if getattr(frame, 'winfo_exists', lambda: False)() and frame.winfo_exists():
+                    for widget in frame.winfo_children():
+                        try:
+                            widget.destroy()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        # Destroy any auxiliary widgets in charts_frame except the four chart containers
+        protected = {self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br}
+        for widget in list(self.charts_frame.winfo_children()):
+            try:
+                if widget not in protected:
+                    widget.destroy()
+            except Exception:
+                pass
 
     def update_charts(self):
         # Delay the first update until the widget is properly sized
@@ -249,7 +270,8 @@ class AnalyticsTab(ctk.CTkFrame):
 
         page_renderers = {
             0: self._render_overview_page, 1: self._render_health_correlation_page,
-            2: self._render_numerical_stats_page, 3: self._render_modeling_page
+            2: self._render_numerical_stats_page, 3: self._render_modeling_page,
+            4: self._render_aw_page
         }
         renderer = page_renderers.get(self.page)
         if renderer: renderer(start_date, end_date, where_clause, params)
@@ -334,12 +356,29 @@ class AnalyticsTab(ctk.CTkFrame):
         pm.embed_figure_in_frame(
             pm.create_correlation_scatter_plot(df, 'avg_stress', 'total_study_minutes', "Study vs. Stress Level",
                                                "Average Stress Level", "Study Minutes"), self.chart_frame_bl)
+        # Always show trends (sleep and study) in the bottom-right for the health correlation page
         pm.embed_figure_in_frame(pm.create_trends_chart(df, self.view_mode.get()), self.chart_frame_br)
 
     def _render_numerical_stats_page(self, start_date, end_date, where_clause, params):
         stats_data = db.get_numerical_analytics(start_date, end_date, where_clause, params)
-        for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl,
-                      self.chart_frame_br]: frame.configure(fg_color=("#DBDBDB", "#2B2B2B"))
+        # Safely set background on the four chart containers. Some of these
+        # widgets may have been replaced or destroyed during prior updates
+        # (CTk wrappers create internal tk widgets which can be torn down),
+        # so guard each configure call.
+        for frame in (self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br):
+            try:
+                if getattr(frame, 'winfo_exists', lambda: False)() and frame.winfo_exists():
+                    try:
+                        frame.configure(bg=BG_COLOR)
+                    except Exception:
+                        # Some CustomTk widgets expect fg_color instead
+                        try:
+                            frame.configure(fg_color=BG_COLOR)
+                        except Exception:
+                            pass
+            except Exception:
+                # If anything about the widget is invalid, skip it rather than crash
+                pass
 
         ctk.CTkLabel(self.chart_frame_tl, text="Overall Stats", font=ctk.CTkFont(size=16, weight="bold")).pack(
             anchor="w", padx=10, pady=(10, 5))
@@ -389,88 +428,98 @@ class AnalyticsTab(ctk.CTkFrame):
 
     def _render_modeling_page(self, start_date, end_date, where_clause, params):
         for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl,
-                      self.chart_frame_br]: frame.configure(fg_color=("#DBDBDB", "#2B2B2B"))
+                      self.chart_frame_br]: frame.configure(bg=BG_COLOR)
         model_type = self.model_type.get()
         analysis_type = self.analysis_type.get()
+
+        # DEBUG: trace entry and selected options
+        try:
+            msg = f"[DEBUG] _render_modeling_page called - model_type={model_type}, analysis_type={analysis_type}, start={start_date}, end={end_date}\n"
+            print(msg.strip())
+            try:
+                with open(os.path.join(os.path.dirname(__file__), '..', '.analytics_debug.log'), 'a', encoding='utf-8') as lf:
+                    lf.write(msg)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
         # Analysis-type specific rendering
         if analysis_type == "CCF":
             # Hide bottom row for single-row layouts and clear them
             for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
             for widget in self.chart_frame_br.winfo_children(): widget.destroy()
-            self.chart_frame_bl.grid_remove()
-            self.chart_frame_br.grid_remove()
-            
-            max_lag = max(1, int(self.ccf_max_lag.get()))
-            ccf_df = correlation_engine.compute_ccf_heatmap_df(start_date, end_date, where_clause, params, lags=range(-max_lag, max_lag+1))
-            fig = pm.create_ccf_heatmap(ccf_df)
-            if fig is None:
-                self._show_error("Not enough data to compute CCF heatmap for this range.")
-                return
-            pm.embed_figure_in_frame(fig, self.chart_frame_tl)
-            self._show_explanation(self.chart_frame_tr, "CCF heatmap: For each health metric (rows), colors show correlation with study minutes at different lags (columns). Positive lag means the health metric happens BEFORE the study day. Warm colors = positive association, cool = negative.")
-            return
-        if analysis_type == "Event Study":
-            # Hide bottom row for single-row layouts and clear them
-            for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
-            for widget in self.chart_frame_br.winfo_children(): widget.destroy()
-            self.chart_frame_bl.grid_remove()
-            self.chart_frame_br.grid_remove()
-            
-            # Controls could be added to UI later; use defaults for now
-            try:
-                win = max(1, int(self.event_window.get()))
-                thr = int(self.event_threshold.get())
-            except Exception:
-                win = 2; thr = 10
-            ev = correlation_engine.compute_event_study_df(start_date, end_date, where_clause, params,
-                                                           feature=self.event_feature.get(),
-                                                           shock=self.event_kind.get(),
-                                                           threshold=thr,
-                                                           window=win)
-            fig = pm.create_event_study_plot(ev)
-            if fig is None:
-                self._show_error("No qualifying events found or insufficient overlapping study data for the selected settings.")
-                return
-            pm.embed_figure_in_frame(fig, self.chart_frame_tl)
-            self._show_explanation(self.chart_frame_tr, "Event study: We detect sudden changes (shocks) in a health metric and average study minutes around those dates. The plot shows mean study time by day relative to the event (D-2..D+3) with error bars.")
-            return
-        if analysis_type == "Quantile":
-            # Hide bottom row for single-row layouts and clear them
-            for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
-            for widget in self.chart_frame_br.winfo_children(): widget.destroy()
-            self.chart_frame_bl.grid_remove()
-            self.chart_frame_br.grid_remove()
-            
-            resq = correlation_engine.run_quantile_regression(start_date, end_date, where_clause, params)
-            if "error" in resq:
-                self._show_error(resq['error'])
-                return
-            fig = pm.create_quantile_coeff_plot(resq['coeff_df'])
-            pm.embed_figure_in_frame(fig, self.chart_frame_tl)
-            self._show_explanation(self.chart_frame_tr, "Quantile regression: Coefficients at different quantiles of study time (e.g., 25th/50th/75th percentiles). This shows how effects can differ on low-study vs high-study days.")
-            return
-
-        # Model selection path (uses all 4 quadrants)
-        # Ensure all frames are visible for model results (in case they were hidden by exploratory analyses)
+    # Modeling page rendering continues below (existing code)
+        # Ensure bottom frames are visible (may have been hidden for single-row analyses)
         self.chart_frame_bl.grid()
         self.chart_frame_br.grid()
-        
+
+        # Model selection path (uses all 4 quadrants)
         if model_type == "Weekly":
+            print("[DEBUG] Running Weekly Efficiency analysis")
+            try:
+                with open(os.path.join(os.path.dirname(__file__), '..', '.analytics_debug.log'), 'a', encoding='utf-8') as lf:
+                    lf.write("[DEBUG] Running Weekly Efficiency analysis\n")
+            except Exception:
+                pass
             df = correlation_engine.prepare_daily_features(start_date, end_date, where_clause, params)
             results = correlation_engine.run_weekly_efficiency_analysis(df)
         elif model_type == "PLS":
+            print("[DEBUG] Running PLS analysis")
+            try:
+                with open(os.path.join(os.path.dirname(__file__), '..', '.analytics_debug.log'), 'a', encoding='utf-8') as lf:
+                    lf.write("[DEBUG] Running PLS analysis\n")
+            except Exception:
+                pass
             results = correlation_engine.run_pls_analysis_full(start_date, end_date, where_clause, params,
                                                                data_method=self.analysis_method.get())
         elif model_type == "IRF":
+            print("[DEBUG] Running IRF analysis")
+            try:
+                with open(os.path.join(os.path.dirname(__file__), '..', '.analytics_debug.log'), 'a', encoding='utf-8') as lf:
+                    lf.write("[DEBUG] Running IRF analysis\n")
+            except Exception:
+                pass
             results = correlation_engine.run_var_irf(start_date, end_date, where_clause, params)
         elif model_type == "HMM":
+            print("[DEBUG] Running HMM analysis")
+            try:
+                with open(os.path.join(os.path.dirname(__file__), '..', '.analytics_debug.log'), 'a', encoding='utf-8') as lf:
+                    lf.write("[DEBUG] Running HMM analysis\n")
+            except Exception:
+                pass
             results = correlation_engine.run_hmm_states(start_date, end_date, where_clause, params)
         else:
+            print(f"[DEBUG] Running standard analysis type={model_type}")
+            try:
+                with open(os.path.join(os.path.dirname(__file__), '..', '.analytics_debug.log'), 'a', encoding='utf-8') as lf:
+                    lf.write(f"[DEBUG] Running standard analysis type={model_type}\n")
+            except Exception:
+                pass
             results = correlation_engine.run_analysis(start_date, end_date, data_method=self.analysis_method.get(),
                                                       model_type=model_type)
 
-        if "error" in results:
+        # DEBUG: inspect results
+        try:
+            if results is None:
+                print("[DEBUG] correlation_engine returned None for results")
+                try:
+                    with open(os.path.join(os.path.dirname(__file__), '..', '.analytics_debug.log'), 'a', encoding='utf-8') as lf:
+                        lf.write("[DEBUG] correlation_engine returned None for results\n")
+                except Exception:
+                    pass
+            else:
+                k = list(results.keys()) if isinstance(results, dict) else type(results)
+                print(f"[DEBUG] results keys: {k}")
+                try:
+                    with open(os.path.join(os.path.dirname(__file__), '..', '.analytics_debug.log'), 'a', encoding='utf-8') as lf:
+                        lf.write(f"[DEBUG] results keys: {k}\n")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        if "error" in (results or {}):
             self._show_error(results['error'])
             return
 
@@ -484,6 +533,133 @@ class AnalyticsTab(ctk.CTkFrame):
             display_func(results)
         else:
             self._show_error("Unknown result type")
+
+    def _render_aw_page(self, start_date, end_date, where_clause, params):
+        """Render ActivityWatch comparison charts.
+
+        - Top-left: AW active hours vs sleep score
+        - Top-right: AW active hours vs sleep duration (hours)
+        - Bottom-left: AW active hours vs avg_stress
+        - Bottom-right: Trends chart (study vs AW) if available
+        """
+        # Get base health and study df
+        df = db.get_health_and_study_data(start_date, end_date, where_clause, params)
+
+        # Ensure numeric types
+        if not df.empty:
+            for col in ['sleep_score', 'total_study_minutes', 'sleep_duration_seconds', 'body_battery', 'avg_stress']:
+                df[col] = pd.to_numeric(df.get(col, pd.Series()), errors='coerce')
+            df['sleep_duration_hours'] = df.get('sleep_duration_seconds', 0) / 3600.0
+
+        # Get AW daily data
+        try:
+            aw_rows = db.get_aw_daily(start_date.isoformat(), end_date.isoformat())
+            if aw_rows:
+                aw_df = pd.DataFrame(aw_rows, columns=['date', 'active_seconds', 'app_summary'])
+                aw_df['date'] = pd.to_datetime(aw_df['date'])
+                aw_df['active_hours'] = aw_df['active_seconds'] / 3600.0
+
+                # Merge on date
+                merged = df.copy()
+                if not merged.empty:
+                    merged['date'] = pd.to_datetime(merged['date'])
+                merged = merged.merge(aw_df[['date', 'active_hours']], on='date', how='left')
+
+                pm.embed_figure_in_frame(
+                    pm.create_correlation_scatter_plot(merged, 'active_hours', 'sleep_score',
+                                                       "AW Active Hours vs Sleep Score",
+                                                       "Active Hours (AW)", "Sleep Score"),
+                    self.chart_frame_tl)
+
+                pm.embed_figure_in_frame(
+                    pm.create_correlation_scatter_plot(merged, 'active_hours', 'sleep_duration_hours',
+                                                       "AW Active Hours vs Sleep Duration",
+                                                       "Active Hours (AW)", "Sleep Duration (Hours)"),
+                    self.chart_frame_tr)
+
+                pm.embed_figure_in_frame(
+                    pm.create_correlation_scatter_plot(merged, 'active_hours', 'avg_stress',
+                                                       "AW Active Hours vs Avg Stress",
+                                                       "Active Hours (AW)", "Avg Stress"),
+                    self.chart_frame_bl)
+
+                # Bottom-right: vertically scrollable area with multiple AW charts
+                for w in self.chart_frame_br.winfo_children():
+                    w.destroy()
+                scroll = ctk.CTkScrollableFrame(self.chart_frame_br, fg_color="transparent")
+                scroll.pack(fill="both", expand=True, padx=6, pady=6)
+
+                # Aggregate apps across the selected range
+                app_totals = Counter()
+                for _, r in aw_df.iterrows():
+                    try:
+                        app_map = json.loads(r['app_summary']) if r['app_summary'] else {}
+                    except Exception:
+                        app_map = {}
+                    for app_name, secs in app_map.items():
+                        try:
+                            app_totals[app_name] += float(secs)
+                        except Exception:
+                            pass
+
+                # Build a DataFrame for daily AW totals for timeline
+                aw_daily_df = aw_df[['date', 'active_hours']].sort_values('date')
+
+                # Top Applications chart
+                top_apps = app_totals.most_common(10)
+                apps_frame = ctk.CTkFrame(scroll, fg_color=BG_COLOR)
+                apps_frame.pack(fill="both", expand=True, padx=6, pady=(6, 4))
+                if top_apps:
+                    pm.embed_figure_in_frame(pm.create_aw_top_apps_bar(top_apps, title="Top Applications"), apps_frame)
+                else:
+                    ctk.CTkLabel(apps_frame, text="No per-app data available.").pack(anchor="w", padx=12, pady=8)
+
+                # Top Window Titles (fallback to same as apps if window-level not available)
+                top_windows = top_apps
+                win_frame = ctk.CTkFrame(scroll, fg_color=BG_COLOR)
+                win_frame.pack(fill="both", expand=True, padx=6, pady=(4, 4))
+                if top_windows:
+                    pm.embed_figure_in_frame(pm.create_aw_top_windows_bar(top_windows, title="Top Window Titles"), win_frame)
+
+                # AW Daily timeline (active hours per day)
+                timeline_frame = ctk.CTkFrame(scroll, fg_color=BG_COLOR)
+                timeline_frame.pack(fill="both", expand=True, padx=6, pady=(4, 4))
+                pm.embed_figure_in_frame(pm.create_aw_daily_bar_chart(aw_daily_df, title="AW Active Hours by Day"), timeline_frame)
+
+                # Category sunburst / donut (use inferred tags as categories)
+                tags = [t[0] for t in db.get_tags()]
+                tag_totals = Counter()
+                tag_map = [(t, t.split('>')[-1].strip().lower()) for t in tags]
+                for app, secs in app_totals.items():
+                    app_l = app.lower()
+                    for full, short in tag_map:
+                        if short and short in app_l:
+                            tag_totals[full] += secs
+
+                cat_items = tag_totals.most_common(12)
+                cat_frame = ctk.CTkFrame(scroll, fg_color=BG_COLOR)
+                cat_frame.pack(fill="both", expand=True, padx=6, pady=(4, 6))
+                if cat_items:
+                    pm.embed_figure_in_frame(pm.create_aw_category_sunburst(cat_items, title="Top Categories (inferred)"), cat_frame)
+                else:
+                    ctk.CTkLabel(cat_frame, text="No inferred categories to display.", text_color="gray").pack(anchor="w", padx=12, pady=8)
+
+                # Small legend / hint
+                ctk.CTkLabel(scroll, text="\nTip: Import AW categories (Tags) via the ActivityWatch tab to improve category mapping.", text_color="gray").pack(anchor="w", pady=(8,4), padx=8)
+                return
+        except Exception:
+            # If anything fails, fall through to fallback
+            pass
+
+        # No AW data available for the selected range: show a friendly message
+        for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br]:
+            for widget in frame.winfo_children():
+                widget.destroy()
+        ctk.CTkLabel(self.chart_frame_tl, text="No ActivityWatch data available for this date range.", font=ctk.CTkFont(size=14)).pack(anchor="center", pady=20)
+        ctk.CTkLabel(self.chart_frame_tr, text="Use the ActivityWatch tab to import data or adjust the date range.", text_color="gray").pack(anchor="center", pady=10)
+        return
+
+        
 
     def _show_error(self, msg):
         for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br]:

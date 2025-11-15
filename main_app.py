@@ -20,6 +20,7 @@ from ui.tracker_tab import TrackerTab
 from ui.pomodoro_tab import PomodoroTab
 from ui.analytics_tab import AnalyticsTab
 from ui.health_tab import HealthTab
+from ui.activitywatch_tab import ActivityWatchTab
 
 
 # --- Application Constants ---
@@ -105,6 +106,12 @@ class StudyTrackerApp(ctk.CTk):
         health_frame.grid_columnconfigure(0, weight=1)
         self.health_tab = HealthTab(health_frame, self)
         self.health_tab.grid(row=0, column=0, sticky="nsew")
+        # ActivityWatch tab (5th main page)
+        aw_frame = self.tab_view.add("ActivityWatch")
+        aw_frame.grid_rowconfigure(0, weight=1)
+        aw_frame.grid_columnconfigure(0, weight=1)
+        self.aw_tab = ActivityWatchTab(aw_frame, self)
+        self.aw_tab.grid(row=0, column=0, sticky="nsew")
 
     # --- Pop-up Window Management ---
     # These methods remain in the main app as they are global actions.
@@ -244,6 +251,11 @@ class StudyTrackerApp(ctk.CTk):
         self.pomodoro_tab.update_pomodoro_log()
         self.analytics_tab.update_charts()
         self.health_tab.update_charts()
+        # Refresh ActivityWatch tab data if present
+        try:
+            self.aw_tab.refresh()
+        except Exception:
+            pass
 
     def update_pomodoro_tags(self, tags, current_tag):
         """

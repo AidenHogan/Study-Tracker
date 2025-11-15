@@ -8,8 +8,6 @@ This is especially relevent for graphical stuff that appears to show
 correlation, but may be using really limited data
 
 
-Dates are off in the factors tab.  Thought 26th was a saturday, but it's sunday
-
 
 Make sure data is starting based on the first recorded day studying, not the first data point
 we have.  Like, if factors go back a year, but the first time recorded studying was 4 weeks ago,
@@ -19,3 +17,10 @@ Can only filter by category : school work
 Need to allow for more robust filtering, based on users specific categories
 
 Time by category day tab on the first analytics page (Piechart) displays: "Time by category" (desired) followed by "(.!ctktabview.ctkframe3." ... [ect])
+
+4th page of analytics tab is squished vertically
+
+Imports ActivityWatch tags and merges them with user tags, which is annoying.  They should be seperate so as not to
+flood user tags with unwanted stuff that's just for more detailed tracking.  
+
+Page 4 analytics (all the data analysis and models) is blank!  From model overviews to CCF and Quantile and event studies!

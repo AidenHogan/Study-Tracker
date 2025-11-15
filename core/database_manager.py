@@ -275,6 +275,20 @@ def setup_database():
         _add_column_if_not_exists(cursor, 'health_metrics', 'hydration_ml', 'REAL')
         _add_column_if_not_exists(cursor, 'health_metrics', 'intensity_minutes', 'INTEGER')
 
+        # ActivityWatch daily aggregation table
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS aw_daily
+                       (
+                           date
+                           TEXT
+                           PRIMARY
+                           KEY,
+                           active_seconds
+                           INTEGER,
+                           app_summary
+                           TEXT
+                       )''')
+
         conn.commit()
 
 
@@ -488,6 +502,21 @@ def add_or_replace_health_metric(date, score, rhr, bb, spo2, resp, sleep_sec, st
     execute_query(
         "INSERT OR REPLACE INTO health_metrics (date, sleep_score, resting_hr, body_battery, pulse_ox, respiration, sleep_duration_seconds, avg_stress, hydration_ml, intensity_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params)
+
+
+def add_or_replace_aw_daily(date, active_seconds, app_summary_json):
+    """Insert or replace a single daily aggregate from ActivityWatch."""
+    params = (date, int(active_seconds), app_summary_json)
+    execute_query("INSERT OR REPLACE INTO aw_daily (date, active_seconds, app_summary) VALUES (?, ?, ?)", params)
+
+
+def get_aw_daily(start_date=None, end_date=None):
+    """Return list of tuples (date, active_seconds, app_summary) optionally filtered by date range."""
+    if start_date and end_date:
+        query = "SELECT date, active_seconds, app_summary FROM aw_daily WHERE date BETWEEN ? AND ? ORDER BY date"
+        return fetch_all(query, (start_date, end_date))
+    else:
+        return fetch_all("SELECT date, active_seconds, app_summary FROM aw_daily ORDER BY date")
 
 
 def add_manual_sleep_entry(date_str, duration_seconds):
