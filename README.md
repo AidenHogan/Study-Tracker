@@ -83,4 +83,5 @@ Summary of notable fixes and new capabilities ready for push:
 Notes and next steps before an official release:
 
 - OAuth1 runtime: To populate hydration and intensity automatically, sign in via the app menu and then run the Garmin sync. Accounts with 2FA may require a browser-based flow. If you prefer a CLI helper, see the `core/garmin_downloader` module.
+- Additional persistence: The codebase prepares for storing more Garmin Daily* stats; I recommend committing the current changes and then adding the dedicated `garmin_daily_stats` table (or extra columns) in a follow-up PR to keep changes small and reviewable.
 - Tests & docs: Unit tests and README sections for migrations and importer behavior will be added in a follow-up commit.

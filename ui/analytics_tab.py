@@ -57,15 +57,33 @@ class AnalyticsTab(ctk.CTkFrame):
 
         # Category Filter
         ctk.CTkLabel(header_frame, text="Filter by Category:").grid(row=0, column=1, padx=(20, 5), sticky="w")
-        ctk.CTkSegmentedButton(header_frame, values=["All Time", "School Work"],
-                               variable=self.category_filter,
-                               command=lambda v: self.update_charts()).grid(row=0, column=2, sticky="w")
+        
+        # Fetch categories from DB for robust filtering
+        try:
+            db_cats = [row[0] for row in db.get_categories()]
+            # Ensure "School Work" is present if not in DB (legacy support) or just rely on DB
+            if "School Work" not in db_cats and "School Work" in ["School Work"]: # Keep existing behavior if needed
+                 pass 
+            categories = ["All Time"] + db_cats
+        except Exception:
+            categories = ["All Time", "School Work"]
+
+        self.category_combo = ctk.CTkComboBox(header_frame, values=categories,
+                                              variable=self.category_filter,
+                                              command=lambda v: self.update_charts(),
+                                              width=150)
+        self.category_combo.grid(row=0, column=2, sticky="w")
 
         ctk.CTkButton(header_frame, text="<", width=30, command=lambda: self._cycle_date_range(-1)).grid(row=0,
                                                                                                          column=4,
                                                                                                          padx=(20, 5))
         self.date_range_label = ctk.CTkLabel(header_frame, text="Date Range", font=ctk.CTkFont(size=14))
         self.date_range_label.grid(row=0, column=5, sticky="ew")  # Changed column
+        
+        # Confidence Label (below date range or next to it)
+        self.confidence_label = ctk.CTkLabel(header_frame, text="", font=ctk.CTkFont(size=11), text_color="gray")
+        self.confidence_label.grid(row=1, column=5, sticky="ew")
+
         ctk.CTkButton(header_frame, text=">", width=30, command=lambda: self._cycle_date_range(1)).grid(row=0, column=6,
                                                                                                         padx=(5, 20))
         ctk.CTkSegmentedButton(header_frame, values=["Day", "Week", "Month", "Year"], variable=self.view_mode,
@@ -134,6 +152,21 @@ class AnalyticsTab(ctk.CTkFrame):
         self.exploratory_controls.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(8,0))
         # Hide by default; only show on page 4 (index 3)
         self.exploratory_controls.grid_remove()
+
+    def _safe_set_frame_bg(self, frame, color):
+        """Safely set background on a frame whether it's a CTkFrame or a plain tk.Frame.
+        Tries CTkFrame-specific option first, falls back to tk 'bg'."""
+        try:
+            # Prefer CTk-style option when available
+            frame.configure(fg_color=color)
+            return
+        except Exception:
+            pass
+        try:
+            frame.configure(bg=color)
+        except Exception:
+            # give up silently
+            pass
 
     def _build_exploratory_controls(self):
         for w in self.exploratory_controls.winfo_children():
@@ -238,9 +271,26 @@ class AnalyticsTab(ctk.CTkFrame):
                 self.after(120, self.update_charts)
                 return
 
+        # Ensure main layout expands correctly (fix for "arrows too high").
+        # Make charts row grow and keep header/footer fixed.
+        try:
+            self.grid_rowconfigure(0, weight=0)
+            self.grid_rowconfigure(1, weight=1)
+            self.grid_rowconfigure(2, weight=0)
+        except Exception:
+            pass
+        
         self._clear_chart_frames()
-        for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br]:
-            frame.grid()
+        
+        # Reset chart frames to default 2x2 grid
+        self.chart_frame_tl.grid(row=0, column=0, sticky="nsew", padx=(5, 2), pady=(5, 2), rowspan=1, columnspan=1)
+        self.chart_frame_tr.grid(row=0, column=1, sticky="nsew", padx=(8, 5), pady=(5, 2), rowspan=1, columnspan=1)
+        self.chart_frame_bl.grid(row=1, column=0, sticky="nsew", padx=(5, 2), pady=(2, 5), rowspan=1, columnspan=1)
+        self.chart_frame_br.grid(row=1, column=1, sticky="nsew", padx=(8, 5), pady=(2, 5), rowspan=1, columnspan=1)
+
+        # Default row weights (50/50)
+        self.charts_frame.grid_rowconfigure(0, weight=1)
+        self.charts_frame.grid_rowconfigure(1, weight=1)
 
         # Force an update to ensure proper layout before embedding figures
         self.charts_frame.update_idletasks()
@@ -264,12 +314,20 @@ class AnalyticsTab(ctk.CTkFrame):
             self.analysis_controls_frame.grid_remove()
             self.exploratory_controls.grid_remove()
 
-        if self.category_filter.get() == "School Work":
-            where_clause = "WHERE date(s.start_time) BETWEEN ? AND ? AND t.category_name = 'School Work'"
-            params = [start_date.isoformat(), end_date.isoformat()]
+        selected_category = self.category_filter.get()
+        if selected_category and selected_category != "All Time":
+            where_clause = "WHERE date(s.start_time) BETWEEN ? AND ? AND t.category_name = ?"
+            params = [start_date.isoformat(), end_date.isoformat(), selected_category]
         else:
             where_clause = "WHERE date(s.start_time) BETWEEN ? AND ?"
             params = [start_date.isoformat(), end_date.isoformat()]
+
+        # Update Data Confidence Label
+        try:
+            conf = correlation_engine.compute_data_confidence(start_date, end_date, where_clause, params)
+            self.confidence_label.configure(text=f"Data Confidence: {conf['percent']}%")
+        except Exception:
+            self.confidence_label.configure(text="")
 
         page_renderers = {
             0: self._render_overview_page, 1: self._render_health_correlation_page,
@@ -292,6 +350,13 @@ class AnalyticsTab(ctk.CTkFrame):
                     self.charts_frame.grid_rowconfigure(1, weight=1)
                 except Exception:
                     pass
+        else:
+            # Reset for standard 2x2 grid on other pages
+            try:
+                self.charts_frame.grid_rowconfigure(0, weight=1)
+                self.charts_frame.grid_rowconfigure(1, weight=1)
+            except Exception:
+                pass
 
         # If not modeling page render synchronously
         renderer = page_renderers.get(self.page)
@@ -412,6 +477,9 @@ class AnalyticsTab(ctk.CTkFrame):
 
     def _render_overview_page(self, start_date, end_date, where_clause, params):
         time_range_str = self.view_mode.get()
+        # Fix: Ensure time_range_str is a simple string, not a widget repr
+        if not isinstance(time_range_str, str) or "ctk" in str(time_range_str).lower():
+            time_range_str = "Day"
 
         # --- Special layout for "Day" view ---
         if time_range_str == "Day":
@@ -421,7 +489,8 @@ class AnalyticsTab(ctk.CTkFrame):
                                      self.chart_frame_tl)
 
             # TOP RIGHT: Detailed Session List (Replaces daily bar chart)
-            self.chart_frame_tr.configure(fg_color=("#DBDBDB", "#2B2B2B"))
+            # Use safe setter since chart_frame_tr may be a plain tk.Frame (no fg_color option).
+            self._safe_set_frame_bg(self.chart_frame_tr, ("#DBDBDB", "#2B2B2B"))
             ctk.CTkLabel(self.chart_frame_tr, text="Session Log", font=ctk.CTkFont(size=16, weight="bold")).pack(
                 anchor="w", padx=10, pady=(10, 5))
             log_frame = ctk.CTkScrollableFrame(self.chart_frame_tr, fg_color="transparent")
@@ -963,18 +1032,39 @@ class AnalyticsTab(ctk.CTkFrame):
         self._show_explanation(self.chart_frame_bl, "PLS (Partial Least Squares): Supervised dimensionality reduction—components are chosen to best predict study time. Coefficients show the direction/strength; VIP scores rank overall importance.")
 
     def _display_irf_results(self, results):
+        # Special layout for IRF: Plot takes full left column (row 0+1) to avoid squishing
+        self.chart_frame_tl.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(5, 2), pady=5)
+        self.chart_frame_bl.grid_remove() # Hidden, as TL takes its place
+        
+        # Right column remains split
+        self.chart_frame_tr.grid(row=0, column=1, sticky="nsew", padx=(8, 5), pady=(5, 2))
+        self.chart_frame_br.grid(row=1, column=1, sticky="nsew", padx=(8, 5), pady=(2, 5))
+
+        # Give row 0 (plot top) more weight, row 1 (explanation) less
+        self.charts_frame.grid_rowconfigure(0, weight=1)
+        self.charts_frame.grid_rowconfigure(1, weight=0)
+
         fig = pm.create_irf_plot(results.get('irf'))
         pm.embed_figure_in_frame(fig, self.chart_frame_tl)
+        
         ctk.CTkLabel(self.chart_frame_tr, text=f"VAR Lag Order: {results.get('lag_order')}").pack(anchor="w", padx=10, pady=10)
-        self._show_explanation(self.chart_frame_bl, "IRF (Impulse Response): Shows how a one-time change in a health metric is followed by changes in study minutes over the next days. Shaded bands indicate uncertainty when available.")
+        
+        # Use BR for explanation since BL is covered by TL
+        self._show_explanation(self.chart_frame_br, "IRF (Impulse Response): Shows how a one-time change in a health metric is followed by changes in study minutes over the next days. Shaded bands indicate uncertainty when available.")
 
     def _display_hmm_results(self, results):
+        # Give more space to the textboxes (row 0)
+        self.charts_frame.grid_rowconfigure(0, weight=3)
+        self.charts_frame.grid_rowconfigure(1, weight=1)
+
         ctk.CTkLabel(self.chart_frame_tl, text="HMM State Means", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=10, pady=(10,5))
         txt = ctk.CTkTextbox(self.chart_frame_tl, wrap="none"); txt.pack(fill="both", expand=True, padx=10, pady=5)
         txt.insert("1.0", results.get('state_means', '')); txt.configure(state="disabled")
+        
         ctk.CTkLabel(self.chart_frame_tr, text="HMM State Counts").pack(anchor="w", padx=10, pady=10)
         txt2 = ctk.CTkTextbox(self.chart_frame_tr, wrap="none"); txt2.pack(fill="both", expand=True, padx=10, pady=5)
         txt2.insert("1.0", str(results.get('state_counts', {}))); txt2.configure(state="disabled")
+        
         self._show_explanation(self.chart_frame_bl, "HMM (Hidden Markov Model): Groups days into latent states (e.g., high/neutral/low productivity) based on patterns in study and health; shows typical values and how often each state occurs.")
 
     def _show_explanation(self, frame, text):

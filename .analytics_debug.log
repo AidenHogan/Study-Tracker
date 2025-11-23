@@ -248,3 +248,75 @@
 [MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
 [DEBUG] Running standard analysis type=Lasso
 [DEBUG] results keys: ['model_type', 'selected_factors', 'eliminated_factors', 'alpha']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running IRF analysis
+[DEBUG] results keys: ['error']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running IRF analysis
+[DEBUG] results keys: ['model_type', 'irf', 'lag_order']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running IRF analysis
+[DEBUG] results keys: ['error']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running IRF analysis
+[DEBUG] results keys: ['model_type', 'irf', 'lag_order']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running standard analysis type=PCA
+[DEBUG] results keys: ['error']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running Weekly Efficiency analysis
+[DEBUG] results keys: ['error']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running PLS analysis
+[DEBUG] results keys: ['error']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running HMM analysis
+[DEBUG] results keys: ['error']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running HMM analysis
+[DEBUG] results keys: ['error']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running HMM analysis
+[DEBUG] results keys: ['model_type', 'n_states', 'state_counts', 'state_means']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running HMM analysis
+[DEBUG] results keys: ['error']
+[MODEL_DEBUG] Frame 0 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 1 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 2 class=Frame exists=1 children=0
+[MODEL_DEBUG] Frame 3 class=Frame exists=1 children=0
+[DEBUG] Running HMM analysis
+[DEBUG] results keys: ['model_type', 'n_states', 'state_counts', 'state_means']

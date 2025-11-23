@@ -345,8 +345,11 @@ def update_tag_category(tag_name, category_name):
     execute_query("UPDATE tags SET category_name = ? WHERE name = ?", (cat_name_or_null, tag_name))
 
 
-def get_tags_with_colors_and_categories():
-    return fetch_all("SELECT name, color, category_name FROM tags ORDER BY name")
+def get_tags_with_colors_and_categories(include_hidden=False):
+    if include_hidden:
+        return fetch_all("SELECT name, color, category_name FROM tags ORDER BY name")
+    else:
+        return fetch_all("SELECT name, color, category_name FROM tags WHERE is_hidden = 0 ORDER BY name")
 
 
 def get_tags(include_hidden=False):
