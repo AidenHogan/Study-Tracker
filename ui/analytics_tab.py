@@ -14,6 +14,7 @@ from core import correlation_engine
 from core.plot_manager import BG_COLOR
 import json
 from collections import Counter
+import threading
 
 
 class AnalyticsTab(ctk.CTkFrame):
@@ -245,6 +246,8 @@ class AnalyticsTab(ctk.CTkFrame):
         self.charts_frame.update_idletasks()
 
         start_date, end_date = self._get_date_range()
+        # Persist current range/context for confidence summaries in explanations
+        self._current_range = (start_date, end_date)
         if start_date == end_date:
             self.date_range_label.configure(text=start_date.strftime('%B %d, %Y'))
         else:
@@ -273,8 +276,137 @@ class AnalyticsTab(ctk.CTkFrame):
             2: self._render_numerical_stats_page, 3: self._render_modeling_page,
             4: self._render_aw_page
         }
+
+        # Adjust grid row weights for modeling page single-row exploratory layouts to prevent "smushed" charts.
+        if self.page == 3:
+            single_row_types = {"CCF", "Event Study", "Quantile"}
+            if self.analysis_type.get() in single_row_types:
+                try:
+                    self.charts_frame.grid_rowconfigure(0, weight=1)
+                    self.charts_frame.grid_rowconfigure(1, weight=0)
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.charts_frame.grid_rowconfigure(0, weight=1)
+                    self.charts_frame.grid_rowconfigure(1, weight=1)
+                except Exception:
+                    pass
+
+        # If not modeling page render synchronously
         renderer = page_renderers.get(self.page)
-        if renderer: renderer(start_date, end_date, where_clause, params)
+        if self.page != 3:
+            if renderer:
+                renderer(start_date, end_date, where_clause, params)
+            return
+
+        # Modeling page: run computations in background and render on main thread
+        self._bg_compute_token = getattr(self, '_bg_compute_token', 0) + 1
+        token = self._bg_compute_token
+        self._show_loading(True)
+
+        analysis_type = self.analysis_type.get()
+        model_type = self.model_type.get()
+
+        def bg_worker():
+            kind = None
+            payload = None
+            err = None
+            try:
+                if analysis_type == 'CCF':
+                    payload = correlation_engine.compute_ccf_heatmap_df(start_date, end_date, where_clause, params,
+                                                                        lags=range(-self.ccf_max_lag.get(), self.ccf_max_lag.get()+1))
+                    kind = 'ccf'
+                elif analysis_type == 'Event Study':
+                    payload = correlation_engine.compute_event_study_df(start_date, end_date, where_clause, params,
+                                                                        feature=self.event_feature.get(), shock=self.event_kind.get(),
+                                                                        threshold=self.event_threshold.get(), window=self.event_window.get())
+                    kind = 'event'
+                elif analysis_type == 'Quantile':
+                    payload = correlation_engine.run_quantile_regression(start_date, end_date, where_clause, params)
+                    kind = 'quantile'
+                else:
+                    payload = correlation_engine.run_analysis(start_date, end_date, data_method=self.analysis_method.get(), model_type=model_type, where_clause=where_clause, params=params)
+                    kind = 'model'
+            except Exception as e:
+                err = e
+
+            def finish():
+                if getattr(self, '_bg_compute_token', None) != token:
+                    return
+                self._show_loading(False)
+                if err:
+                    self._show_error(str(err))
+                    return
+
+                try:
+                    if kind == 'ccf':
+                        if payload is None:
+                            self._show_error('Not enough data for CCF analysis.')
+                            return
+                        pm.embed_figure_in_frame(pm.create_ccf_heatmap(payload), self.chart_frame_tl)
+                        ctk.CTkLabel(self.chart_frame_tr, text='Cross-Correlation Function (CCF)', font=ctk.CTkFont(size=16, weight='bold')).pack(anchor='w', padx=10, pady=10)
+                        self._show_explanation(self.chart_frame_tr, 'Shows correlation between study time and health metrics at different day lags.')
+                    elif kind == 'event':
+                        if payload is None:
+                            self._show_error('No events found for selected parameters.')
+                            return
+                        pm.embed_figure_in_frame(pm.create_event_study_plot(payload, title=f"Study Time around {self.event_feature.get()} {self.event_kind.get()}"), self.chart_frame_tl)
+                        ctk.CTkLabel(self.chart_frame_tr, text='Event Study Analysis', font=ctk.CTkFont(size=16, weight='bold')).pack(anchor='w', padx=10, pady=10)
+                        self._show_explanation(self.chart_frame_tr, 'Analyzes how study time changes before and after selected events.')
+                    elif kind == 'quantile':
+                        if isinstance(payload, dict) and 'error' in payload:
+                            self._show_error(payload['error'])
+                            return
+                        pm.embed_figure_in_frame(pm.create_quantile_coeff_plot(payload.get('coeff_df')), self.chart_frame_tl)
+                        ctk.CTkLabel(self.chart_frame_tr, text='Quantile Regression', font=ctk.CTkFont(size=16, weight='bold')).pack(anchor='w', padx=10, pady=10)
+                        self._show_explanation(self.chart_frame_tr, 'Shows how impacts change across productivity quantiles.')
+                    elif kind == 'model':
+                        if not payload:
+                            self._show_error('Model returned no results.')
+                            return
+                        if 'error' in (payload or {}):
+                            self._show_error(payload.get('error', 'Model error'))
+                            return
+                        display_map = {
+                            'Lasso': self._display_lasso_results, 'PCA': self._display_pca_results,
+                            'Standard': self._display_standard_results, 'Weekly Efficiency': self._display_weekly_results,
+                            'PLS': self._display_pls_results, 'IRF': self._display_irf_results, 'HMM': self._display_hmm_results
+                        }
+                        display_func = display_map.get(payload.get('model_type'))
+                        if display_func:
+                            display_func(payload)
+                        else:
+                            self._show_error('Unknown result type')
+                except Exception as e:
+                    self._show_error(f"Render error: {e}")
+
+            try:
+                self.after(0, finish)
+            except Exception:
+                finish()
+
+        th = threading.Thread(target=bg_worker, daemon=True)
+        th.start()
+
+        # For modeling page overview renderings, schedule a second pass if initial heights are tiny (layout race)
+        if self.page == 3 and self.analysis_type.get() == "Overview":
+            try:
+                tl_h = self.chart_frame_tl.winfo_height()
+                if tl_h < 120 and not getattr(self, '_model_retry_scheduled', False):
+                    self._model_retry_scheduled = True
+                    self.after(160, lambda: self._retry_modeling(where_clause, params))
+            except Exception:
+                pass
+
+    def _retry_modeling(self, where_clause, params):
+        # Clear flag and re-render modeling page (overview) after geometry stabilized
+        self._model_retry_scheduled = False
+        start_date, end_date = self._current_range
+        try:
+            self._render_modeling_page(start_date, end_date, where_clause, params)
+        except Exception:
+            pass
 
     # In ui/analytics_tab.py, find the _render_overview_page function and replace it with this updated version.
 
@@ -313,7 +445,7 @@ class AnalyticsTab(ctk.CTkFrame):
 
             # BOTTOM RIGHT: Time by Category
             pm.embed_figure_in_frame(
-                pm.create_category_pie_chart(db.get_time_by_category(where_clause, params), self.chart_frame_br),
+                pm.create_category_pie_chart(db.get_time_by_category(where_clause, params), time_range_str),
                 self.chart_frame_br)
 
         # --- Standard layout for all other views ---
@@ -390,13 +522,20 @@ class AnalyticsTab(ctk.CTkFrame):
                      text=f"Daily Average: {timedelta(seconds=int(stats_data['daily_avg_seconds']))}", anchor="w").pack(
             anchor="w", padx=20)
 
-        ctk.CTkLabel(self.chart_frame_tr, text="Category Breakdown", font=ctk.CTkFont(size=16, weight="bold")).pack(
+        ctk.CTkLabel(self.chart_frame_tr, text="Category & Tag Breakdown", font=ctk.CTkFont(size=16, weight="bold")).pack(
             anchor="w", padx=10, pady=(10, 5))
         cat_frame = ctk.CTkScrollableFrame(self.chart_frame_tr, fg_color="transparent")
         cat_frame.pack(fill="both", expand=True, padx=5)
+        
+        ctk.CTkLabel(cat_frame, text="Categories:", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(0,2))
         for category, seconds in sorted(stats_data['category_breakdown'].items(), key=lambda item: item[1],
                                         reverse=True):
-            ctk.CTkLabel(cat_frame, text=f"{category}: {timedelta(seconds=int(seconds))}").pack(anchor="w", padx=10)
+            ctk.CTkLabel(cat_frame, text=f"{category}: {timedelta(seconds=int(seconds))}").pack(anchor="w", padx=20)
+            
+        ctk.CTkLabel(cat_frame, text="\nTags:", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(5,2))
+        tag_bd = stats_data.get('tag_breakdown', {})
+        for tag, seconds in sorted(tag_bd.items(), key=lambda item: item[1], reverse=True):
+             ctk.CTkLabel(cat_frame, text=f"{tag}: {timedelta(seconds=int(seconds))}").pack(anchor="w", padx=20)
 
         ctk.CTkLabel(self.chart_frame_bl, text="Session Metrics", font=ctk.CTkFont(size=16, weight="bold")).pack(
             anchor="w", padx=10, pady=(10, 5))
@@ -427,29 +566,117 @@ class AnalyticsTab(ctk.CTkFrame):
             ctk.CTkLabel(self.chart_frame_br, text="Most Productive Day: N/A", anchor="w").pack(anchor="w", padx=20)
 
     def _render_modeling_page(self, start_date, end_date, where_clause, params):
-        for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl,
-                      self.chart_frame_br]: frame.configure(bg=BG_COLOR)
-        model_type = self.model_type.get()
-        analysis_type = self.analysis_type.get()
-
-        # DEBUG: trace entry and selected options
-        try:
-            msg = f"[DEBUG] _render_modeling_page called - model_type={model_type}, analysis_type={analysis_type}, start={start_date}, end={end_date}\n"
-            print(msg.strip())
+        # Robustly attempt to set background on the four chart containers. We've seen sporadic
+        # Tk "invalid command name" errors when a prior update destroyed an internal tk.Label
+        # belonging to a CustomTkinter widget; guard each call so a stale reference doesn't
+        # abort the entire rendering path.
+        for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br]:
             try:
-                with open(os.path.join(os.path.dirname(__file__), '..', '.analytics_debug.log'), 'a', encoding='utf-8') as lf:
-                    lf.write(msg)
+                # Some are plain tk.Frame (use 'bg'), some could be CTkFrame (use 'fg_color').
+                try:
+                    frame.configure(bg=BG_COLOR)
+                except Exception:
+                    try:
+                        frame.configure(fg_color=BG_COLOR)
+                    except Exception:
+                        pass
             except Exception:
                 pass
+        # DEBUG: log widget classes to help diagnose blank page issues.
+        try:
+            debug_log_path = os.path.join(os.path.dirname(__file__), '..', '.analytics_debug.log')
+            with open(debug_log_path, 'a', encoding='utf-8') as lf:
+                for idx, frame in enumerate([self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br]):
+                    try:
+                        lf.write(f"[MODEL_DEBUG] Frame {idx} class={getattr(frame, 'winfo_class', lambda: 'N/A')()} exists={getattr(frame, 'winfo_exists', lambda: False)()} children={len(frame.winfo_children())}\n")
+                    except Exception:
+                        lf.write(f"[MODEL_DEBUG] Frame {idx} inaccessible\n")
         except Exception:
             pass
+        model_type = self.model_type.get()
+        analysis_type = self.analysis_type.get()
 
         # Analysis-type specific rendering
         if analysis_type == "CCF":
             # Hide bottom row for single-row layouts and clear them
             for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
             for widget in self.chart_frame_br.winfo_children(): widget.destroy()
-    # Modeling page rendering continues below (existing code)
+            self.chart_frame_bl.grid_remove()
+            self.chart_frame_br.grid_remove()
+            
+            # Run CCF
+            ccf_df = correlation_engine.compute_ccf_heatmap_df(start_date, end_date, where_clause, params, lags=range(-self.ccf_max_lag.get(), self.ccf_max_lag.get()+1))
+            if ccf_df is None:
+                self._show_error("Not enough data for CCF analysis.")
+                return
+            
+            # Display CCF
+            # We'll use the top two frames merged or just top-left large
+            # For simplicity, let's put the heatmap in TL and explanation in TR
+            pm.embed_figure_in_frame(pm.create_ccf_heatmap(ccf_df), self.chart_frame_tl)
+            
+            ctk.CTkLabel(self.chart_frame_tr, text="Cross-Correlation Function (CCF)", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=10, pady=10)
+            self._show_explanation(self.chart_frame_tr, 
+                "Shows correlation between study time and health metrics at different day lags.\n\n"
+                "• Lag 0: Same day correlation.\n"
+                "• Lag -k: Health metric k days ago vs Study today.\n"
+                "• Red: Positive correlation (High metric -> High study).\n"
+                "• Blue: Negative correlation (High metric -> Low study).")
+            return
+
+        elif analysis_type == "Event Study":
+            # Hide bottom row
+            for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
+            for widget in self.chart_frame_br.winfo_children(): widget.destroy()
+            self.chart_frame_bl.grid_remove()
+            self.chart_frame_br.grid_remove()
+            
+            feature = self.event_feature.get()
+            shock = self.event_kind.get()
+            threshold = self.event_threshold.get()
+            window = self.event_window.get()
+            
+            event_df = correlation_engine.compute_event_study_df(start_date, end_date, where_clause, params,
+                                                                 feature=feature, shock=shock, 
+                                                                 threshold=threshold, window=window)
+            if event_df is None:
+                self._show_error(f"No events found for {feature} ({shock} >= {threshold}) or insufficient data.")
+                return
+                
+            pm.embed_figure_in_frame(pm.create_event_study_plot(event_df, title=f"Study Time around {feature} {shock}"), self.chart_frame_tl)
+            
+            ctk.CTkLabel(self.chart_frame_tr, text="Event Study Analysis", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=10, pady=10)
+            self._show_explanation(self.chart_frame_tr,
+                f"Analyzes how study time changes before and after a significant '{shock}' in {feature}.\n\n"
+                f"• Day 0: The day the {shock} occurred.\n"
+                f"• Negative days: Days leading up to the event.\n"
+                f"• Positive days: Days following the event.\n"
+                "• Error bars show the standard error of the mean.")
+            return
+
+        elif analysis_type == "Quantile":
+            # Hide bottom row
+            for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
+            for widget in self.chart_frame_br.winfo_children(): widget.destroy()
+            self.chart_frame_bl.grid_remove()
+            self.chart_frame_br.grid_remove()
+            
+            results = correlation_engine.run_quantile_regression(start_date, end_date, where_clause, params)
+            if "error" in results:
+                self._show_error(results['error'])
+                return
+                
+            pm.embed_figure_in_frame(pm.create_quantile_coeff_plot(results['coeff_df']), self.chart_frame_tl)
+            
+            ctk.CTkLabel(self.chart_frame_tr, text="Quantile Regression", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=10, pady=10)
+            self._show_explanation(self.chart_frame_tr,
+                "Shows how the impact of health metrics changes for different levels of productivity (quantiles).\n\n"
+                "• 0.25: Low productivity days.\n"
+                "• 0.50: Median productivity days.\n"
+                "• 0.75: High productivity days.\n"
+                "If a line slopes up, that factor helps you more on your best days than your worst days.")
+            return
+
         # Ensure bottom frames are visible (may have been hidden for single-row analyses)
         self.chart_frame_bl.grid()
         self.chart_frame_br.grid()
@@ -668,6 +895,31 @@ class AnalyticsTab(ctk.CTkFrame):
                                    font=ctk.CTkFont(size=16), justify="center", wraplength=500)
         error_label.grid(row=0, column=0, columnspan=2, rowspan=2, sticky="nsew")
 
+    def _show_loading(self, show=True):
+        """Show or hide a lightweight loading overlay in the charts area.
+
+        This is safe to call from the main thread only; callers from background
+        threads should schedule via `after(0, ...)`.
+        """
+        try:
+            if show:
+                # If already present, don't recreate
+                if getattr(self, '_loading_overlay', None) and getattr(self._loading_overlay, 'winfo_exists', lambda: False)():
+                    return
+                lbl = ctk.CTkLabel(self.charts_frame, text="Computing…", font=ctk.CTkFont(size=14), text_color="#888888")
+                lbl.grid(row=0, column=0, columnspan=2, rowspan=2, sticky="nsew")
+                self._loading_overlay = lbl
+            else:
+                if getattr(self, '_loading_overlay', None):
+                    try:
+                        self._loading_overlay.destroy()
+                    except Exception:
+                        pass
+                    self._loading_overlay = None
+        except Exception:
+            # Never raise UI errors from this helper
+            pass
+
     def _display_pls_results(self, results):
         # Top-left: Coefficients
         ctk.CTkLabel(self.chart_frame_tl, text="PLS Coefficients", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=10, pady=(10,5))
@@ -729,6 +981,21 @@ class AnalyticsTab(ctk.CTkFrame):
         # Place a wrapped label with gray text below the main chart/text
         lbl = ctk.CTkLabel(frame, text=text, wraplength=300, justify="left", text_color="gray")
         lbl.pack(anchor="w", padx=10, pady=10)
+        # Append data confidence if we have current range context
+        try:
+            if hasattr(self, '_current_range'):
+                start_date, end_date = self._current_range
+                # Reuse last where clause/params from latest update; recompute for safety
+                if self.category_filter.get() == "School Work":
+                    where_clause = "WHERE date(s.start_time) BETWEEN ? AND ? AND t.category_name = 'School Work'"
+                else:
+                    where_clause = "WHERE date(s.start_time) BETWEEN ? AND ?"
+                params = [start_date.isoformat(), end_date.isoformat()]
+                conf = correlation_engine.compute_data_confidence(start_date, end_date, where_clause, params)
+                conf_text = f"Data Confidence: {conf['percent']}%\n{conf['rationale']}"
+                ctk.CTkLabel(frame, text=conf_text, wraplength=300, justify="left", text_color="#999999").pack(anchor="w", padx=10, pady=(0,10))
+        except Exception:
+            pass
 
     def _show_help_modal(self):
         help_text = (

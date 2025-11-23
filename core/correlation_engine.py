@@ -64,6 +64,40 @@ POTENTIAL_FEATURE_COLS = [
 ]
 DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
+# -----------------
+# Data Confidence Heuristic
+# -----------------
+def compute_data_confidence(start_date, end_date, where_clause, params):
+    """Return a simple heuristic confidence measure (0-100%) about whether
+    patterns we show are likely to be stable.
+
+    Heuristic rationale (transparent, not a statistical guarantee):
+    - More rows (days) and a reasonable ratio of rows-to-features improves confidence.
+    - We require at least 10 non-null observations per feature to include it in modeling.
+    - Baseline requirement: >= 20 days OR rows >= 5 * features.
+    - Score scales with rows / max(20, 5*features).
+    - Capped at 100%. If rows < 7 we show very low confidence (<35%).
+    """
+    try:
+        daily = prepare_daily_features(start_date, end_date, where_clause, params)
+    except Exception:
+        return {"percent": 0, "rationale": "Failed to load daily feature matrix."}
+    if daily is None or daily.empty:
+        return {"percent": 0, "rationale": "No rows in selected date range."}
+    # Count usable rows (after first session date) where study minutes is not NaN
+    usable = daily['total_study_minutes'].dropna()
+    n_rows = usable.shape[0]
+    # Determine feature columns with >=10 non-null values (excluding target)
+    feature_cols = [c for c in daily.columns if c not in (TARGET_VARIABLE,) and daily[c].notna().sum() >= 10]
+    n_feats = len(feature_cols)
+    denom = max(20, 5 * n_feats if n_feats > 0 else 20)
+    raw_score = n_rows / denom if denom > 0 else 0
+    percent = int(min(max(raw_score * 100, 0), 100))
+    if n_rows < 7:
+        percent = min(percent, 35)
+    rationale = f"{n_rows} usable day(s); {n_feats} feature(s) with >=10 values. Baseline target: {denom} rows."
+    return {"percent": percent, "rationale": rationale}
+
 
 def prepare_daily_features(start_date, end_date, where_clause, params):
     """
@@ -275,6 +309,16 @@ def run_weekly_analysis(start_date, end_date, data_method='Imputed', model_type=
         return run_lasso_analysis(model_df, available_features)
     elif model_type == 'PCA':
         return run_pca_analysis(model_df, available_features)
+    elif model_type == 'PLS':
+        # Use the full PLS routine which needs start/end/context
+        return run_pls_analysis_full(start_date, end_date, where_clause, params, data_method=data_method)
+    elif model_type == 'IRF':
+        return run_var_irf(start_date, end_date, where_clause, params)
+    elif model_type == 'HMM':
+        return run_hmm_states(start_date, end_date, where_clause, params)
+    elif model_type in ('Weekly', 'Weekly Efficiency'):
+        # Provide a user-friendly weekly-summary analysis
+        return run_weekly_efficiency_analysis(df)
     else:
         return {"error": "Invalid model type selected."}
 
@@ -452,6 +496,15 @@ def run_analysis(start_date, end_date, data_method='Strict', model_type='Lasso',
         return run_lasso_analysis(model_df, available_features)
     elif model_type == 'PCA':
         return run_pca_analysis(model_df, available_features)
+    elif model_type == 'PLS':
+        # PLS requires the full start/end context and has its own sufficiency checks
+        return run_pls_analysis_full(start_date, end_date, where_clause, params, data_method=data_method)
+    elif model_type == 'IRF' or model_type == 'IRF':
+        return run_var_irf(start_date, end_date, where_clause, params)
+    elif model_type == 'HMM':
+        return run_hmm_states(start_date, end_date, where_clause, params)
+    elif model_type in ('Weekly', 'Weekly Efficiency'):
+        return run_weekly_efficiency_analysis(df)
     else:
         return {"error": "Invalid model type selected."}
 

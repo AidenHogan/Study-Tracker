@@ -271,6 +271,7 @@ def setup_database():
         _add_column_if_not_exists(cursor, 'tags', 'color', "TEXT DEFAULT '#3b8ed0'")
         _add_column_if_not_exists(cursor, 'pomodoro_sessions', 'main_session_id', 'INTEGER')
         _add_column_if_not_exists(cursor, 'tags', 'category_name', 'TEXT')
+        _add_column_if_not_exists(cursor, 'tags', 'is_hidden', 'INTEGER DEFAULT 0')
         _add_column_if_not_exists(cursor, 'health_metrics', 'avg_stress', 'INTEGER')
         _add_column_if_not_exists(cursor, 'health_metrics', 'hydration_ml', 'REAL')
         _add_column_if_not_exists(cursor, 'health_metrics', 'intensity_minutes', 'INTEGER')
@@ -348,20 +349,34 @@ def get_tags_with_colors_and_categories():
     return fetch_all("SELECT name, color, category_name FROM tags ORDER BY name")
 
 
-def get_tags():
-    return fetch_all("SELECT name FROM tags ORDER BY name")
+def get_tags(include_hidden=False):
+    if include_hidden:
+        return fetch_all("SELECT name FROM tags ORDER BY name")
+    else:
+        return fetch_all("SELECT name FROM tags WHERE is_hidden = 0 ORDER BY name")
 
 
-def add_tag(tag_name):
+def add_tag(tag_name, is_hidden=0):
     try:
-        execute_query("INSERT INTO tags (name) VALUES (?)", (tag_name,))
+        execute_query("INSERT INTO tags (name, is_hidden) VALUES (?, ?)", (tag_name, is_hidden))
         return True, ""
     except sqlite3.IntegrityError:
         return False, f"Tag '{tag_name}' already exists."
 
 
 def delete_tag(tag_name):
+    # Full deletion: remove tag and orphaned sessions that reference it.
+    # This is used only when user confirms permanent history removal.
+    execute_query("DELETE FROM sessions WHERE tag = ?", (tag_name,))
     execute_query("DELETE FROM tags WHERE name = ?", (tag_name,))
+
+def archive_tag(tag_name):
+    """Soft-delete a tag by marking it hidden. Keeps historical session data intact."""
+    execute_query("UPDATE tags SET is_hidden = 1 WHERE name = ?", (tag_name,))
+
+def restore_tag(tag_name):
+    """Unhide an archived tag."""
+    execute_query("UPDATE tags SET is_hidden = 0 WHERE name = ?", (tag_name,))
 
 
 def update_tag_color(tag_name, color):
@@ -452,10 +467,9 @@ def get_health_and_study_data(start_date, end_date, where_clause, params):
     except Exception:
         earliest = None
     if earliest is not None:
-        # df index is DatetimeIndex; earliest is date -> convert to Timestamp for compare
-        mask = df.index >= pd.to_datetime(earliest)
-        df.loc[mask, 'total_study_minutes'] = df.loc[mask, 'total_study_minutes'].fillna(0)
-        # Leave NaN values before earliest session date so plots can drop them
+        # Filter out data before the first recorded study session
+        df = df[df.index >= pd.to_datetime(earliest)]
+        df['total_study_minutes'] = df['total_study_minutes'].fillna(0)
 
     # Turn the date index into a column for plotting
     df = df.reset_index()
@@ -474,6 +488,7 @@ def get_numerical_analytics(start_date, end_date, where_clause, params):
             "total_seconds": 0, "daily_avg_seconds": 0, "num_sessions": 0,
             "num_days_worked": 0, "avg_session_seconds": 0,
             "longest_session_seconds": 0, "category_breakdown": {},
+            "tag_breakdown": {},
             "top_tag": "N/A", "most_productive_day": "N/A",
             "most_productive_day_seconds": 0
         }
@@ -481,10 +496,20 @@ def get_numerical_analytics(start_date, end_date, where_clause, params):
     total_seconds = df['duration_seconds'].sum()
     num_sessions = len(df)
     num_days_worked = df['session_date'].nunique()
-    daily_avg_seconds = total_seconds / num_days_worked if num_days_worked > 0 else 0
+    
+    # Calculate total days in range for correct daily average
+    try:
+        s_date = datetime.fromisoformat(params[0])
+        e_date = datetime.fromisoformat(params[1])
+        total_days = (e_date - s_date).days + 1
+        daily_avg_seconds = total_seconds / total_days if total_days > 0 else 0
+    except Exception:
+        daily_avg_seconds = total_seconds / num_days_worked if num_days_worked > 0 else 0
+
     avg_session_seconds = df['duration_seconds'].mean()
     longest_session_seconds = df['duration_seconds'].max()
     category_breakdown = df.groupby('category')['duration_seconds'].sum().to_dict()
+    tag_breakdown = df.groupby('tag')['duration_seconds'].sum().to_dict()
     top_tag = df.groupby('tag')['duration_seconds'].sum().idxmax()
     daily_totals = df.groupby('session_date')['duration_seconds'].sum()
     most_productive_day = daily_totals.idxmax()
@@ -493,6 +518,7 @@ def get_numerical_analytics(start_date, end_date, where_clause, params):
     return {"total_seconds": total_seconds, "daily_avg_seconds": daily_avg_seconds, "num_sessions": num_sessions,
             "num_days_worked": num_days_worked, "avg_session_seconds": avg_session_seconds,
             "longest_session_seconds": longest_session_seconds, "category_breakdown": category_breakdown,
+            "tag_breakdown": tag_breakdown,
             "top_tag": top_tag, "most_productive_day": most_productive_day,
             "most_productive_day_seconds": most_productive_day_seconds}
 

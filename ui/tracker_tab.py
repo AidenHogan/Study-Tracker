@@ -17,6 +17,7 @@ class TrackerTab(ctk.CTkFrame):
         self.timer_running = False
         self.start_time = None
         self.current_calendar_date = datetime.now()
+        self.selected_date = date.today()  # Date whose sessions are displayed/editable
         self.struggle_timer_job = None
         self.struggle_seconds_left = 0
 
@@ -64,7 +65,8 @@ class TrackerTab(ctk.CTkFrame):
         self.struggle_time_label = ctk.CTkLabel(self.struggle_frame, text="")
         self.struggle_time_label.grid(row=0, column=1, padx=(5, 0))
 
-        ctk.CTkLabel(left_frame, text="Today's Sessions", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(10, 5))
+        self.sessions_title_label = ctk.CTkLabel(left_frame, text="Sessions for Today", font=ctk.CTkFont(size=16, weight="bold"))
+        self.sessions_title_label.pack(pady=(10, 5))
         self.sessions_frame = ctk.CTkScrollableFrame(left_frame, label_text="")
         self.sessions_frame.pack(pady=10, padx=20, fill="both", expand=True)
 
@@ -124,9 +126,10 @@ class TrackerTab(ctk.CTkFrame):
 
     def update_session_list(self):
         for widget in self.sessions_frame.winfo_children(): widget.destroy()
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        target_str = self.selected_date.strftime('%Y-%m-%d')
+        self.sessions_title_label.configure(text=f"Sessions for {target_str}")
         query = "SELECT s.id, s.tag, s.duration_seconds, t.color, s.notes FROM sessions s JOIN tags t ON s.tag = t.name WHERE date(s.start_time) = ? ORDER BY s.start_time DESC"
-        sessions = db.fetch_all(query, (today_str,))
+        sessions = db.fetch_all(query, (target_str,))
 
         if not sessions:
             ctk.CTkLabel(self.sessions_frame, text="No sessions logged today.").pack()
@@ -158,13 +161,18 @@ class TrackerTab(ctk.CTkFrame):
         q2 = db.fetch_one("SELECT SUM(duration_seconds) FROM sessions WHERE date(start_time) >= ?",
                           (start_of_week.strftime('%Y-%m-%d'),))
         q3 = db.fetch_one("SELECT SUM(duration_seconds) FROM sessions")
+        earliest = db.get_earliest_session_date()
         q4 = db.fetch_one("SELECT COUNT(DISTINCT date(start_time)) FROM sessions")
         dates_q = db.fetch_all("SELECT DISTINCT date(start_time) FROM sessions ORDER BY date(start_time) DESC")
 
-        today_total = q1[0] or 0
-        week_total = q2[0] or 0
-        total_s = q3[0] or 0
-        total_d = q4[0] or 1  # Avoid division by zero
+        today_total = (q1[0] or 0) if q1 else 0
+        week_total = (q2[0] or 0) if q2 else 0
+        total_s = (q3[0] or 0) if q3 else 0
+        if earliest:
+            total_days_span = (date.today() - earliest).days + 1
+        else:
+            total_days_span = (q4[0] or 1) if q4 else 1
+        total_d = total_days_span or 1  # Avoid division by zero
 
         self.today_focus_label.configure(text=f"Today's Focus\n{str(timedelta(seconds=int(today_total)))}")
         self.week_focus_label.configure(text=f"This Week\n{str(timedelta(seconds=int(week_total)))}")
@@ -172,7 +180,7 @@ class TrackerTab(ctk.CTkFrame):
         self.daily_avg_label.configure(text=f"Daily Average\n{str(timedelta(seconds=int(total_s / total_d)))}")
 
         # Streak calculation
-        dates = {datetime.strptime(row[0], '%Y-%m-%d').date() for row in dates_q}
+        dates = {datetime.strptime(row[0], '%Y-%m-%d').date() for row in dates_q} if dates_q else set()
         current_streak, best_streak = 0, 0
         if dates:
             today_date = date.today()
@@ -228,15 +236,25 @@ class TrackerTab(ctk.CTkFrame):
                 day_frame.rowconfigure(0, weight=1)
                 day_frame.columnconfigure(0, weight=1)
 
-                is_today = (date.today() == date(year, month, day))
+                current_day_date = date(year, month, day)
+                is_today = (date.today() == current_day_date)
+                is_selected = (self.selected_date == current_day_date)
                 lbl_frame = ctk.CTkFrame(
                     day_frame,
                     corner_radius=5,
-                    border_width=2 if is_today else 0,
-                    border_color="#3b8ed0",
+                    border_width=2 if (is_today or is_selected) else 0,
+                    border_color="#3b8ed0" if is_today else ("#db8e3b" if is_selected else "#3b8ed0"),
                 )
                 lbl_frame.grid(row=0, column=0, sticky="nsew")
-                ctk.CTkLabel(lbl_frame, text=str(day)).pack(expand=True)
+                day_label = ctk.CTkLabel(lbl_frame, text=str(day))
+                day_label.pack(expand=True)
+                # Clicking a day selects it and refreshes session list
+                def _on_select_day(d=current_day_date):
+                    self.selected_date = d
+                    self.update_session_list()
+                    self.update_calendar_display()
+                lbl_frame.bind("<Button-1>", lambda e, d=current_day_date: _on_select_day(d))
+                day_label.bind("<Button-1>", lambda e, d=current_day_date: _on_select_day(d))
 
                 if day in sessions_by_day:
                     lbl_frame.configure(fg_color="#345e37")  # Green for days with sessions

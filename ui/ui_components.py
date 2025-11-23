@@ -259,8 +259,79 @@ class TagManagementWindow(ctk.CTkToplevel):
             messagebox.showwarning("Duplicate", message, parent=self)
 
     def delete_tag(self, tag_name):
-        db.delete_tag(tag_name)
+        # Confirmation modal offering Archive vs Full Delete
+        msg = ("Delete Tag Options:\n\n" 
+               "Archive: Hide this tag from future selection, KEEP all past session data.\n" 
+               "Full Delete: Remove the tag AND all sessions that used it (cannot be undone).\n\n" 
+               f"Tag: {tag_name}\n\nChoose an option:")
+        dialog = messagebox.askquestion("Delete Tag", msg + "\n\nClick 'Yes' for Full Delete, 'No' to Archive.")
+        try:
+            if dialog == 'yes':
+                db.delete_tag(tag_name)
+            else:
+                db.archive_tag(tag_name)
+        except Exception as e:
+            messagebox.showerror("Tag Deletion Error", f"Operation failed: {e}", parent=self)
+            return
+
+        # Lightweight, immediate UI update to avoid freezing the whole app.
+        # Update the tag list in-place and inform dependent widgets.
+        try:
+            self.load_tags()
+        except Exception:
+            pass
+
+        try:
+            # Update tracker and pomodoro comboboxes without doing the full analytics/health refresh.
+            tags = [row[0] for row in db.get_tags()]
+            current_tag = tags[0] if tags else ""
+            try:
+                self.master_app.tracker_tab.tag_combobox.configure(values=tags)
+                self.master_app.tracker_tab.tag_combobox.set(current_tag)
+            except Exception:
+                pass
+            try:
+                self.master_app.update_pomodoro_tags(tags, current_tag)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Schedule a full refresh shortly after so heavy computations happen after UI becomes responsive.
+        try:
+            # Use a small delay so the UI updates first and avoids the OS marking the window as not-responding.
+            self.after(600, lambda: self.master_app.update_all_displays())
+        except Exception:
+            # Fallback to immediate refresh if scheduling fails
+            try:
+                self.master_app.update_all_displays()
+            except Exception:
+                pass
+
+    def restore_archived_tags(self):
+        # Simple picker window listing archived tags to restore
+        archived = [row[0] for row in db.get_tags(include_hidden=True) if row[0] not in [t[0] for t in db.get_tags()]]
+        if not archived:
+            messagebox.showinfo("Restore Tags", "No archived tags to restore.", parent=self)
+            return
+        win = ctk.CTkToplevel(self)
+        win.title("Restore Archived Tags")
+        win.geometry("300x400")
+        list_frame = ctk.CTkScrollableFrame(win)
+        list_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        for t in archived:
+            row = ctk.CTkFrame(list_frame)
+            row.pack(fill='x', pady=2)
+            ctk.CTkLabel(row, text=t).pack(side='left', padx=5)
+            ctk.CTkButton(row, text="Restore", width=70, command=lambda name=t: self._restore_and_refresh(win, name)).pack(side='right', padx=5)
+
+    def _restore_and_refresh(self, window, tag_name):
+        try:
+            db.restore_tag(tag_name)
+        except Exception as e:
+            messagebox.showerror("Restore Error", f"Could not restore {tag_name}: {e}", parent=window)
         self.refresh_all()
+        window.destroy()
 
     def change_color(self, tag_name, old_color):
         new_color = colorchooser.askcolor(initialcolor=old_color, title=f"Select color for {tag_name}")

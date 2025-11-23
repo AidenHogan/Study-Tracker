@@ -207,7 +207,8 @@ def import_aw_tags_json(filepath):
             category_name = raw_name[0]
 
         try:
-            ok, msg = db.add_tag(name)
+            # Mark ActivityWatch-imported tags as hidden so they don't flood user tag lists
+            ok, msg = db.add_tag(name, is_hidden=1)
             if not ok:
                 # duplicate likely
                 skipped += 1

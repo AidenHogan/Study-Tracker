@@ -166,6 +166,14 @@ def embed_figure_in_frame(fig, frame):
         except Exception:
             pass
 
+    # If initial frame height is very small (common during first render race), schedule a deferred resize
+    try:
+        frame.update_idletasks()
+        if frame.winfo_height() < 120:
+            frame.after(180, lambda: frame.event_generate('<Configure>'))
+    except Exception:
+        pass
+
     # Keep the pyplot handle closed but ensure canvas retains the figure
     try:
         plt.close(fig)

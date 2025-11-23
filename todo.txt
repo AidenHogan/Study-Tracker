@@ -1,0 +1,17 @@
+Let's add automatic descriptions for explanatory analytics
+
+(limited implementation so far)
+Add a confidence level in the data.  So say, we have 10 days recording 20 factors.
+What's the confidence we can accurately predict anything from that (as a percent)
+This is especially relevent for graphical stuff that appears to show 
+correlation, but may be using really limited data
+
+
+Can only filter by category : school work
+Need to allow for more robust filtering, based on users specific categories
+
+What am I saying here????
+Time by category day tab on the first analytics page (Piechart) displays: "Time by category" (desired) followed by "(.!ctktabview.ctkframe3." ... [ect])
+
+
+4th page of analytics tab is squished vertically
