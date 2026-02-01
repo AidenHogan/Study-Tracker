@@ -49,14 +49,19 @@ If you wish to run the project from its source code:
 
 1.  **Clone the repository:**
     ```sh
-    git clone [https://github.com/AidenHogan/repo-name.git](https://github.com/AidenHogan/repo-name.git)
-    cd your-repo-name
+    git clone https://github.com/AidenHogan/Study-Tracker.git
+    cd Study-Tracker
     ```
 2.  **Create and activate a virtual environment:**
     ```sh
-    # On Windows
+    # Create the environment
     python -m venv .venv
+      
+    # Activate on Windows
     .venv\Scripts\activate
+      
+    # Activate on macOS/Linux  NOTE: Only Windows is currently supported
+    source .venv/bin/activate
     ```
 3.  **Install the required packages:**
     ```sh
