@@ -227,7 +227,19 @@ class AnalyticsTab(ctk.CTkFrame):
             self.end_date += relativedelta(months=direction)
         elif mode == "Year":
             self.end_date += relativedelta(years=direction)
-        self.update_charts()
+
+        # 2. Update the label immediately so the UI feels responsive
+        start, end = self._get_date_range()
+        if start == end:
+            self.date_range_label.configure(text=start.strftime('%B %d, %Y'))
+        else:
+            self.date_range_label.configure(text=f"{start.strftime('%b %d, %Y')} - {end.strftime('%b %d, %Y')}")
+        # Cancel the previous timer if the user clicked again too fast
+        if hasattr(self, '_debounce_timer'):
+            self.after_cancel(self._debounce_timer)
+        # Start a new timer. 
+        # The app will wait 400ms. If no new clicks happen, it runs update_charts.
+        self._debounce_timer = self.after(800, self.update_charts)
 
     def _cycle_chart_page(self, direction):
         self.page = (self.page + direction) % self.max_pages
