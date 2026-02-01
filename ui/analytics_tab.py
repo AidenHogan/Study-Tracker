@@ -362,6 +362,12 @@ class AnalyticsTab(ctk.CTkFrame):
                     elif an_type == 'Quantile':
                         result['payload'] = correlation_engine.run_quantile_regression(start_date, end_date, where_clause, params)
                         result['subkind'] = 'quantile'
+                    elif mod_type == 'Weekly':
+                        # Weekly requires special preparation and a different engine function
+                        df = correlation_engine.prepare_daily_features(start_date, end_date, where_clause, params)
+                        result['payload'] = correlation_engine.run_weekly_efficiency_analysis(df)
+                        result['subkind'] = 'model'
+                        result['model_type'] = 'Weekly'
                     else:
                         result['payload'] = correlation_engine.run_analysis(start_date, end_date, data_method=an_method, model_type=mod_type, where_clause=where_clause, params=params)
                         result['subkind'] = 'model'
@@ -413,7 +419,7 @@ class AnalyticsTab(ctk.CTkFrame):
                          if not payload or 'error' in payload: self._show_error(payload.get('error', 'Model error') if payload else 'No results')
                          else:
                              mtype = result.get('model_type')
-                             display_map = {'Lasso': self._display_lasso_results, 'PCA': self._display_pca_results, 'Standard': self._display_standard_results, 'Weekly Efficiency': self._display_weekly_results, 'PLS': self._display_pls_results, 'IRF': self._display_irf_results, 'HMM': self._display_hmm_results}
+                             display_map = {'Lasso': self._display_lasso_results, 'PCA': self._display_pca_results, 'Standard': self._display_standard_results, 'Weekly': self._display_weekly_results, 'PLS': self._display_pls_results, 'IRF': self._display_irf_results, 'HMM': self._display_hmm_results}
                              if mtype in display_map: display_map[mtype](payload)
              except Exception as e:
                  self._show_error(f"Render error: {e}")
