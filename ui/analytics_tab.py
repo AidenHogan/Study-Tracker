@@ -40,7 +40,8 @@ class AnalyticsTab(ctk.CTkFrame):
 
         # --- UI Setup ---
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        #Minsize Forces ui to fit the screen TODO: this might brick things with other screen sizes/resolutions.  For me it's good tho
+        self.grid_rowconfigure(1, weight=1, minsize=800)
         self._create_widgets()
         # Rendering guards to avoid drawing before layout is ready
         self._first_update_done = False
