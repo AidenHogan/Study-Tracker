@@ -2,7 +2,7 @@
 A detailed study/time tracker with various data visualizations
 # Focus & Wellness Tracker
 
-A desktop application designed to help track study sessions and explore correlations between focus habits and personal wellness data, such as sleep.
+A desktop application designed to help track study sessions and explore correlations between focus habits and personal wellness data, such as sleep quality and duration.
 
 ## About The Project
 
@@ -17,13 +17,13 @@ This project was conceived as a tool to gain better insights into personal produ
 **Session Timer:** A simple stopwatch to time study sessions with subject tagging.
 **Manual Entry:** Manually add or edit past study sessions with notes.
 **Dashboard:** An at-a-glance view of today's focus, weekly totals, lifetime stats, and study streaks.
-**Productivity Calendar:** A heatmap-style calendar that visualizes which days you studied and the subjects covered.
+**Productivity Calendar:** A heatmap-style calendar that visualizes which days you studied and the subjects covered (color display).
 **In-Depth Analytics:**
     * Breakdown of time spent per subject (Pie Chart).
     * Productivity trends by day, hour, and day of the week (Bar Charts).
 **Health Correlation:**
     * Import sleep and wellness data from a Garmin Connect CSV export, or manually track and enter sleep duration.
-    * Visualize relationships between study time and metrics like Sleep Score, Sleep Duration, and Garmin's 'Body Battery'.
+    * Visualize relationships between study time and metrics like Sleep Score, Sleep Duration, and various Garmin data.
 **Data Management:**
     * Create and manage custom tags with unique colors.
     * Ability to export all session and health data to CSV files for further analysis.
@@ -49,14 +49,19 @@ If you wish to run the project from its source code:
 
 1.  **Clone the repository:**
     ```sh
-    git clone [https://github.com/AidenHogan/repo-name.git](https://github.com/AidenHogan/repo-name.git)
-    cd your-repo-name
+    git clone https://github.com/AidenHogan/Study-Tracker.git
+    cd Study-Tracker
     ```
 2.  **Create and activate a virtual environment:**
     ```sh
-    # On Windows
+    # Create the environment
     python -m venv .venv
+      
+    # Activate on Windows
     .venv\Scripts\activate
+      
+    # Activate on macOS/Linux  NOTE: Only Windows is currently supported
+    source .venv/bin/activate
     ```
 3.  **Install the required packages:**
     ```sh
@@ -69,19 +74,10 @@ If you wish to run the project from its source code:
 
 ## Author
 
-* **Aiden Hogan** - *Concept & Direction*
-
-## Recent updates (Oct 2025)
-
-Summary of notable fixes and new capabilities ready for push:
-
-- Startup fix: Replaced a fragile CustomTkinter menu path with a standard `tkinter.Menu` in `main_app.py` to avoid a stack overflow crash on some Windows environments. The app now launches reliably in the packaged and development environments.
-- Garmin OAuth1 support: Added an interactive sign-in helper and a menu entry (Garmin → Sign in to Garmin (OAuth)) to obtain/persist an OAuth1-capable session so richer Garmin endpoints (DailyHydration, DailyIntensityMinutes, resting HR, SpO2, detailed body battery) can be accessed when you sign in.
-- Database schema additions: New daily health columns were prepared in the importer/db code to accept `hydration_ml` and `intensity_minutes` (these will be populated after a successful OAuth1 sync). The importer accepts both `Date` and legacy `Bedtime` CSV headers.
-- Weekly & rolling analysis: The correlation engine now includes weekly resampling and rolling-window feature engineering (week-level aggregates, 1/2/4-week rolling stats). Weekly analysis smoke-tested and returns model selection outputs.
+* **Aiden Hogan** - Concept, Direction, and Debugging
 
 Notes and next steps before an official release:
 
-- OAuth1 runtime: To populate hydration and intensity automatically, sign in via the app menu and then run the Garmin sync. Accounts with 2FA may require a browser-based flow. If you prefer a CLI helper, see the `core/garmin_downloader` module.
-- Additional persistence: The codebase prepares for storing more Garmin Daily* stats; I recommend committing the current changes and then adding the dedicated `garmin_daily_stats` table (or extra columns) in a follow-up PR to keep changes small and reviewable.
+- OAuth1 runtime: To populate hydration and intensity automatically, sign in via the app menu and then run the Garmin sync. Accounts with 2FA may require a browser-based flow. If a CLI helper turns out to be preferable, see the `core/garmin_downloader` module.
+- Additional persistence: The codebase prepares for storing more Garmin Daily* stats; potentially add the dedicated `garmin_daily_stats` table (or extra columns).
 - Tests & docs: Unit tests and README sections for migrations and importer behavior will be added in a follow-up commit.
