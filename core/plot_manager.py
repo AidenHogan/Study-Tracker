@@ -1,6 +1,14 @@
 # file: plot_manager.py
 
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+import matplotlib.patches as patches
+# Try to import colormaps registry for newer MPL versions
+try:
+    from matplotlib import colormaps
+except ImportError:
+    colormaps = None
+
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 import os
@@ -19,8 +27,9 @@ GOLD = '#FFD700'
 def _setup_base_chart(title, xlabel=None, ylabel=None):
     """Creates and styles a base Matplotlib figure and axis to avoid repeating code."""
     # Use constrained_layout instead of tight_layout for better automatic spacing
-    fig, ax = plt.subplots(figsize=(6, 4), facecolor=BG_COLOR, 
-                          constrained_layout=True)
+    fig = Figure(figsize=(6, 4), facecolor=BG_COLOR, constrained_layout=True)
+    ax = fig.add_subplot(111)
+    
     ax.set_title(title, color=TEXT_COLOR)
     if xlabel: ax.set_xlabel(xlabel, color=TEXT_COLOR)
     if ylabel: ax.set_ylabel(ylabel, color=TEXT_COLOR)
@@ -174,11 +183,7 @@ def embed_figure_in_frame(fig, frame):
     except Exception:
         pass
 
-    # Keep the pyplot handle closed but ensure canvas retains the figure
-    try:
-        plt.close(fig)
-    except Exception:
-        pass
+    # No need to call plt.close(fig) as we are using Figure() directly and it's not managed by pyplot
 
 
 def create_pie_chart(data, time_range):
@@ -200,7 +205,16 @@ def create_category_pie_chart(data, time_range):
     labels, sizes = zip(*data)
     fig, ax = _setup_base_chart(f"Time by Category ({time_range})")
     # Generate colors for the categories
-    colors = plt.cm.get_cmap('viridis', len(labels)).colors
+    import matplotlib.cm as cm
+    try:
+        if hasattr(cm, 'get_cmap'):
+             colors = cm.get_cmap('viridis', len(labels)).colors
+        else:
+             # Matplotlib 3.7+
+             colors = [cm.viridis(x) for x in np.linspace(0, 1, len(labels))]
+    except Exception:
+         colors = None
+
     ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90, textprops={'color': TEXT_COLOR})
     ax.axis('equal')
     try:
@@ -331,8 +345,7 @@ def create_ccf_heatmap(ccf_df, title="Lagged Correlations (CCF)"):
     ax.set_xticks(range(len(ccf_df.columns)))
     ax.set_xticklabels([str(c) for c in ccf_df.columns], rotation=0, color=TEXT_COLOR)
     cbar = fig.colorbar(im, ax=ax)
-    cbar.ax.yaxis.set_tick_params(color=TEXT_COLOR)
-    plt.setp(cbar.ax.get_yticklabels(), color=TEXT_COLOR)
+    cbar.ax.yaxis.set_tick_params(color=TEXT_COLOR, labelcolor=TEXT_COLOR)
     return fig
 
 
@@ -382,7 +395,8 @@ def create_irf_plot(irf_df, title_prefix="Impulse Response: "):
         return None
     # If multiple responses, create subplots
     n = len(irf_df)
-    fig, axes = plt.subplots(n, 1, figsize=(6, max(3, 2*n)), facecolor=BG_COLOR, constrained_layout=True)
+    fig = Figure(figsize=(6, max(3, 2*n)), facecolor=BG_COLOR, constrained_layout=True)
+    axes = fig.subplots(n, 1)
     if n == 1:
         axes = [axes]
     for ax, (resp, df_resp) in zip(axes, irf_df.items()):
@@ -445,10 +459,15 @@ def create_aw_category_sunburst(cat_items, title="Top Categories"):
     sizes = [s for l, s in cat_items]
     fig, ax = _setup_base_chart(title)
     # Use a donut chart to approximate a sunburst
-    cmap = plt.cm.get_cmap('tab20', len(labels)).colors
+    import matplotlib.cm as cm
+    try:
+        cmap = cm.get_cmap('tab20', len(labels)).colors if hasattr(cm, 'get_cmap') else [cm.tab20(x) for x in np.linspace(0, 1, len(labels))]
+    except:
+        cmap = None
+        
     wedges, texts = ax.pie(sizes, labels=labels, colors=cmap, startangle=90, textprops={'color': TEXT_COLOR})
     # draw center circle for donut
-    centre_circle = plt.Circle((0, 0), 0.55, color=BG_COLOR)
+    centre_circle = patches.Circle((0, 0), 0.55, color=BG_COLOR)
     ax.add_artist(centre_circle)
     ax.axis('equal')
     try:

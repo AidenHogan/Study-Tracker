@@ -261,24 +261,19 @@ class AnalyticsTab(ctk.CTkFrame):
     def update_charts(self):
         # Delay the first update until the widget is properly sized
         if not self._first_update_done:
-            # Force a layout pass so geometry info is up-to-date
             self.update_idletasks()
-            # Check both width and height of the charts frame to ensure it's ready
             if self.charts_frame.winfo_width() > 150 and self.charts_frame.winfo_height() > 150:
                 self._first_update_done = True
             else:
-                # Not ready yet, try again shortly
                 self.after(120, self.update_charts)
                 return
 
-        # Ensure main layout expands correctly (fix for "arrows too high").
-        # Make charts row grow and keep header/footer fixed.
+        # Ensure main layout
         try:
             self.grid_rowconfigure(0, weight=0)
             self.grid_rowconfigure(1, weight=1)
             self.grid_rowconfigure(2, weight=0)
-        except Exception:
-            pass
+        except Exception: pass
         
         self._clear_chart_frames()
         
@@ -288,32 +283,30 @@ class AnalyticsTab(ctk.CTkFrame):
         self.chart_frame_bl.grid(row=1, column=0, sticky="nsew", padx=(5, 2), pady=(2, 5), rowspan=1, columnspan=1)
         self.chart_frame_br.grid(row=1, column=1, sticky="nsew", padx=(8, 5), pady=(2, 5), rowspan=1, columnspan=1)
 
-        # Default row weights (50/50)
         self.charts_frame.grid_rowconfigure(0, weight=1)
         self.charts_frame.grid_rowconfigure(1, weight=1)
-
-        # Force an update to ensure proper layout before embedding figures
         self.charts_frame.update_idletasks()
 
         start_date, end_date = self._get_date_range()
-        # Persist current range/context for confidence summaries in explanations
         self._current_range = (start_date, end_date)
+        
+        # Update labels
         if start_date == end_date:
             self.date_range_label.configure(text=start_date.strftime('%B %d, %Y'))
         else:
-            self.date_range_label.configure(
-                text=f"{start_date.strftime('%b %d, %Y')} - {end_date.strftime('%b %d, %Y')}")
+            self.date_range_label.configure(text=f"{start_date.strftime('%b %d, %Y')} - {end_date.strftime('%b %d, %Y')}")
         self.page_label.configure(text=f"Page {self.page + 1} / {self.max_pages}")
 
+        # Controls
         if self.page == 3:
             self.analysis_controls_frame.grid()
-            # Rebuild exploratory controls when modeling page is visible
             self._build_exploratory_controls()
             self.exploratory_controls.grid()
         else:
             self.analysis_controls_frame.grid_remove()
             self.exploratory_controls.grid_remove()
 
+        # Build SQL Params
         selected_category = self.category_filter.get()
         if selected_category and selected_category != "All Time":
             where_clause = "WHERE date(s.start_time) BETWEEN ? AND ? AND t.category_name = ?"
@@ -322,246 +315,201 @@ class AnalyticsTab(ctk.CTkFrame):
             where_clause = "WHERE date(s.start_time) BETWEEN ? AND ?"
             params = [start_date.isoformat(), end_date.isoformat()]
 
-        # Update Data Confidence Label
-        try:
-            conf = correlation_engine.compute_data_confidence(start_date, end_date, where_clause, params)
-            self.confidence_label.configure(text=f"Data Confidence: {conf['percent']}%")
-        except Exception:
-            self.confidence_label.configure(text="")
-
-        page_renderers = {
-            0: self._render_overview_page, 1: self._render_health_correlation_page,
-            2: self._render_numerical_stats_page, 3: self._render_modeling_page,
-            4: self._render_aw_page
-        }
-
-        # Adjust grid row weights for modeling page single-row exploratory layouts to prevent "smushed" charts.
-        if self.page == 3:
-            single_row_types = {"CCF", "Event Study", "Quantile"}
-            if self.analysis_type.get() in single_row_types:
-                try:
-                    self.charts_frame.grid_rowconfigure(0, weight=1)
-                    self.charts_frame.grid_rowconfigure(1, weight=0)
-                except Exception:
-                    pass
-            else:
-                try:
-                    self.charts_frame.grid_rowconfigure(0, weight=1)
-                    self.charts_frame.grid_rowconfigure(1, weight=1)
-                except Exception:
-                    pass
-        else:
-            # Reset for standard 2x2 grid on other pages
-            try:
-                self.charts_frame.grid_rowconfigure(0, weight=1)
-                self.charts_frame.grid_rowconfigure(1, weight=1)
-            except Exception:
-                pass
-
-        # If not modeling page render synchronously
-        renderer = page_renderers.get(self.page)
-        if self.page != 3:
-            if renderer:
-                renderer(start_date, end_date, where_clause, params)
-            return
-
-        # Modeling page: run computations in background and render on main thread
+        # Unified Thread dispatch
         self._bg_compute_token = getattr(self, '_bg_compute_token', 0) + 1
         token = self._bg_compute_token
         self._show_loading(True)
 
-        analysis_type = self.analysis_type.get()
-        model_type = self.model_type.get()
-
+        # Capture variables for thread
+        page = self.page
+        view_mode = self.view_mode.get()
+        # Modeling params
+        an_type = self.analysis_type.get()
+        mod_type = self.model_type.get()
+        evt_feat = self.event_feature.get()
+        evt_kind = self.event_kind.get()
+        evt_thresh = self.event_threshold.get()
+        evt_win = self.event_window.get()
+        ccf_lag = self.ccf_max_lag.get()
+        an_method = self.analysis_method.get()
+        
         def bg_worker():
-            kind = None
-            payload = None
-            err = None
+            result = {'payload': None, 'kind': 'error', 'conf': None}
             try:
-                if analysis_type == 'CCF':
-                    payload = correlation_engine.compute_ccf_heatmap_df(start_date, end_date, where_clause, params,
-                                                                        lags=range(-self.ccf_max_lag.get(), self.ccf_max_lag.get()+1))
-                    kind = 'ccf'
-                elif analysis_type == 'Event Study':
-                    payload = correlation_engine.compute_event_study_df(start_date, end_date, where_clause, params,
-                                                                        feature=self.event_feature.get(), shock=self.event_kind.get(),
-                                                                        threshold=self.event_threshold.get(), window=self.event_window.get())
-                    kind = 'event'
-                elif analysis_type == 'Quantile':
-                    payload = correlation_engine.run_quantile_regression(start_date, end_date, where_clause, params)
-                    kind = 'quantile'
-                else:
-                    payload = correlation_engine.run_analysis(start_date, end_date, data_method=self.analysis_method.get(), model_type=model_type, where_clause=where_clause, params=params)
-                    kind = 'model'
+                # Compute confidence safely
+                try: 
+                     conf = correlation_engine.compute_data_confidence(start_date, end_date, where_clause, params)
+                     result['conf'] = f"Data Confidence: {conf['percent']}%"
+                except: pass
+
+                if page == 0:
+                    result['kind'] = 'overview'
+                    result['payload'] = self._prepare_overview_page(start_date, end_date, where_clause, params, view_mode)
+                elif page == 1:
+                    result['kind'] = 'health'
+                    result['payload'] = self._prepare_health_page(start_date, end_date, where_clause, params)
+                elif page == 2:
+                    result['kind'] = 'stats'
+                    result['payload'] = db.get_numerical_analytics(start_date, end_date, where_clause, params)
+                elif page == 3:
+                    result['kind'] = 'modeling'
+                    if an_type == 'CCF':
+                        result['payload'] = correlation_engine.compute_ccf_heatmap_df(start_date, end_date, where_clause, params, lags=range(-ccf_lag, ccf_lag+1))
+                        result['subkind'] = 'ccf'
+                    elif an_type == 'Event Study':
+                        result['payload'] = correlation_engine.compute_event_study_df(start_date, end_date, where_clause, params, feature=evt_feat, shock=evt_kind, threshold=evt_thresh, window=evt_win)
+                        result['subkind'] = 'event'
+                    elif an_type == 'Quantile':
+                        result['payload'] = correlation_engine.run_quantile_regression(start_date, end_date, where_clause, params)
+                        result['subkind'] = 'quantile'
+                    else:
+                        result['payload'] = correlation_engine.run_analysis(start_date, end_date, data_method=an_method, model_type=mod_type, where_clause=where_clause, params=params)
+                        result['subkind'] = 'model'
+                        result['model_type'] = mod_type
+                elif page == 4:
+                    result['kind'] = 'aw'
+                    result['payload'] = self._prepare_aw_page(start_date, end_date, where_clause, params)
+                    
             except Exception as e:
-                err = e
+                result['error'] = str(e)
+            return result
 
-            def finish():
-                if getattr(self, '_bg_compute_token', None) != token:
-                    return
-                self._show_loading(False)
-                if err:
-                    self._show_error(str(err))
-                    return
+        def finish(result):
+             if getattr(self, '_bg_compute_token', None) != token: return
+             self._show_loading(False)
+             if result.get('conf'): self.confidence_label.configure(text=result['conf'])
+             else: self.confidence_label.configure(text="")
 
-                try:
-                    if kind == 'ccf':
-                        if payload is None:
-                            self._show_error('Not enough data for CCF analysis.')
-                            return
-                        pm.embed_figure_in_frame(pm.create_ccf_heatmap(payload), self.chart_frame_tl)
-                        ctk.CTkLabel(self.chart_frame_tr, text='Cross-Correlation Function (CCF)', font=ctk.CTkFont(size=16, weight='bold')).pack(anchor='w', padx=10, pady=10)
-                        self._show_explanation(self.chart_frame_tr, 'Shows correlation between study time and health metrics at different day lags.')
-                    elif kind == 'event':
-                        if payload is None:
-                            self._show_error('No events found for selected parameters.')
-                            return
-                        pm.embed_figure_in_frame(pm.create_event_study_plot(payload, title=f"Study Time around {self.event_feature.get()} {self.event_kind.get()}"), self.chart_frame_tl)
-                        ctk.CTkLabel(self.chart_frame_tr, text='Event Study Analysis', font=ctk.CTkFont(size=16, weight='bold')).pack(anchor='w', padx=10, pady=10)
-                        self._show_explanation(self.chart_frame_tr, 'Analyzes how study time changes before and after selected events.')
-                    elif kind == 'quantile':
-                        if isinstance(payload, dict) and 'error' in payload:
-                            self._show_error(payload['error'])
-                            return
-                        pm.embed_figure_in_frame(pm.create_quantile_coeff_plot(payload.get('coeff_df')), self.chart_frame_tl)
-                        ctk.CTkLabel(self.chart_frame_tr, text='Quantile Regression', font=ctk.CTkFont(size=16, weight='bold')).pack(anchor='w', padx=10, pady=10)
-                        self._show_explanation(self.chart_frame_tr, 'Shows how impacts change across productivity quantiles.')
-                    elif kind == 'model':
-                        if not payload:
-                            self._show_error('Model returned no results.')
-                            return
-                        if 'error' in (payload or {}):
-                            self._show_error(payload.get('error', 'Model error'))
-                            return
-                        display_map = {
-                            'Lasso': self._display_lasso_results, 'PCA': self._display_pca_results,
-                            'Standard': self._display_standard_results, 'Weekly Efficiency': self._display_weekly_results,
-                            'PLS': self._display_pls_results, 'IRF': self._display_irf_results, 'HMM': self._display_hmm_results
-                        }
-                        display_func = display_map.get(payload.get('model_type'))
-                        if display_func:
-                            display_func(payload)
-                        else:
-                            self._show_error('Unknown result type')
-                except Exception as e:
-                    self._show_error(f"Render error: {e}")
+             if result.get('error'):
+                 self._show_error(result['error'])
+                 return
+                 
+             kind = result.get('kind')
+             payload = result.get('payload')
+             
+             try:
+                 if kind == 'overview': self._display_overview(payload)
+                 elif kind == 'health': self._display_health(payload)
+                 elif kind == 'stats': self._display_stats(payload)
+                 elif kind == 'aw': self._display_aw(payload)
+                 elif kind == 'modeling':
+                     subkind = result.get('subkind')
+                     if subkind == 'ccf':
+                         if payload is None: self._show_error('Not enough data.')
+                         else: 
+                              pm.embed_figure_in_frame(pm.create_ccf_heatmap(payload), self.chart_frame_tl)
+                              ctk.CTkLabel(self.chart_frame_tr, text='Cross-Correlation', font=ctk.CTkFont(size=16, weight='bold')).pack(anchor='w', padx=10, pady=10)
+                     elif subkind == 'event':
+                         if payload is None: self._show_error('No events found.')
+                         else:
+                              pm.embed_figure_in_frame(pm.create_event_study_plot(payload, title=f"Study Time around {evt_feat}"), self.chart_frame_tl)
+                              ctk.CTkLabel(self.chart_frame_tr, text='Event Study', font=ctk.CTkFont(size=16, weight='bold')).pack(anchor='w', padx=10, pady=10)
+                     elif subkind == 'quantile':
+                         if isinstance(payload, dict) and 'error' in payload: self._show_error(payload['error'])
+                         else:
+                              pm.embed_figure_in_frame(pm.create_quantile_coeff_plot(payload.get('coeff_df')), self.chart_frame_tl)
+                              ctk.CTkLabel(self.chart_frame_tr, text='Quantile Reg', font=ctk.CTkFont(size=16, weight='bold')).pack(anchor='w', padx=10, pady=10)
+                     elif subkind == 'model':
+                         if not payload or 'error' in payload: self._show_error(payload.get('error', 'Model error') if payload else 'No results')
+                         else:
+                             mtype = result.get('model_type')
+                             display_map = {'Lasso': self._display_lasso_results, 'PCA': self._display_pca_results, 'Standard': self._display_standard_results, 'Weekly Efficiency': self._display_weekly_results, 'PLS': self._display_pls_results, 'IRF': self._display_irf_results, 'HMM': self._display_hmm_results}
+                             if mtype in display_map: display_map[mtype](payload)
+             except Exception as e:
+                 self._show_error(f"Render error: {e}")
 
-            try:
-                self.after(0, finish)
-            except Exception:
-                finish()
-
-        th = threading.Thread(target=bg_worker, daemon=True)
-        th.start()
-
-        # For modeling page overview renderings, schedule a second pass if initial heights are tiny (layout race)
-        if self.page == 3 and self.analysis_type.get() == "Overview":
-            try:
-                tl_h = self.chart_frame_tl.winfo_height()
-                if tl_h < 120 and not getattr(self, '_model_retry_scheduled', False):
-                    self._model_retry_scheduled = True
-                    self.after(160, lambda: self._retry_modeling(where_clause, params))
-            except Exception:
-                pass
+        threading.Thread(target=lambda: self.after(0, lambda: finish(bg_worker())), daemon=True).start()
 
     def _retry_modeling(self, where_clause, params):
-        # Clear flag and re-render modeling page (overview) after geometry stabilized
-        self._model_retry_scheduled = False
-        start_date, end_date = self._current_range
-        try:
-            self._render_modeling_page(start_date, end_date, where_clause, params)
-        except Exception:
-            pass
+        # Simply re-trigger update if needed
+        self.update_charts()
 
     # In ui/analytics_tab.py, find the _render_overview_page function and replace it with this updated version.
 
-    def _render_overview_page(self, start_date, end_date, where_clause, params):
-        time_range_str = self.view_mode.get()
-        # Fix: Ensure time_range_str is a simple string, not a widget repr
+    def _prepare_overview_page(self, start_date, end_date, where_clause, params, time_range_str):
         if not isinstance(time_range_str, str) or "ctk" in str(time_range_str).lower():
             time_range_str = "Day"
-
-        # --- Special layout for "Day" view ---
+            
+        results = {'figs': {}, 'data': {}, 'time_range': time_range_str}
+        
         if time_range_str == "Day":
-            # TOP LEFT: Time by Subject (Pie Chart)
             query1 = f"SELECT s.tag, SUM(s.duration_seconds), t.color FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY s.tag"
-            pm.embed_figure_in_frame(pm.create_pie_chart(db.fetch_all(query1, params), time_range_str),
-                                     self.chart_frame_tl)
-
-            # TOP RIGHT: Detailed Session List (Replaces daily bar chart)
-            # Use safe setter since chart_frame_tr may be a plain tk.Frame (no fg_color option).
-            self._safe_set_frame_bg(self.chart_frame_tr, ("#DBDBDB", "#2B2B2B"))
-            ctk.CTkLabel(self.chart_frame_tr, text="Session Log", font=ctk.CTkFont(size=16, weight="bold")).pack(
-                anchor="w", padx=10, pady=(10, 5))
-            log_frame = ctk.CTkScrollableFrame(self.chart_frame_tr, fg_color="transparent")
-            log_frame.pack(fill="both", expand=True, padx=5)
-
+            results['figs']['tl'] = pm.create_pie_chart(db.fetch_all(query1, params), time_range_str)
+            
             day_sessions_query = f"SELECT s.tag, s.start_time, s.end_time, s.duration_seconds FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} ORDER BY s.start_time"
-            day_sessions = db.fetch_all(day_sessions_query, params)
-            if not day_sessions:
-                ctk.CTkLabel(log_frame, text="No sessions logged.").pack(anchor="w", padx=10)
-            else:
-                for tag, start, end, duration in day_sessions:
-                    start_dt = datetime.fromisoformat(start)
-                    end_dt = datetime.fromisoformat(end)
-                    duration_str = str(timedelta(seconds=int(duration)))
-                    log_text = f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')} ({duration_str}) - {tag}"
-                    ctk.CTkLabel(log_frame, text=log_text).pack(anchor="w", padx=10)
-
-            # BOTTOM LEFT: Hourly breakdown (using new function)
+            results['data']['sessions'] = db.fetch_all(day_sessions_query, params)
+            
             hourly_df = db.get_hourly_breakdown_for_day(start_date.isoformat(), where_clause, params)
-            pm.embed_figure_in_frame(pm.create_hourly_bar_chart(hourly_df, time_range_str), self.chart_frame_bl)
-
-            # BOTTOM RIGHT: Time by Category
-            pm.embed_figure_in_frame(
-                pm.create_category_pie_chart(db.get_time_by_category(where_clause, params), time_range_str),
-                self.chart_frame_br)
-
-        # --- Standard layout for all other views ---
+            results['figs']['bl'] = pm.create_hourly_bar_chart(hourly_df, time_range_str)
+            results['figs']['br'] = pm.create_category_pie_chart(db.get_time_by_category(where_clause, params), time_range_str)
         else:
             query1 = f"SELECT s.tag, SUM(s.duration_seconds), t.color FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY s.tag"
-            pm.embed_figure_in_frame(pm.create_pie_chart(db.fetch_all(query1, params), time_range_str),
-                                     self.chart_frame_tl)
+            results['figs']['tl'] = pm.create_pie_chart(db.fetch_all(query1, params), time_range_str)
 
             query2 = f"SELECT strftime('%Y-%m-%d', s.start_time) as day, SUM(s.duration_seconds)/60.0 as minutes FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY day ORDER BY day"
-            pm.embed_figure_in_frame(
-                pm.create_daily_bar_chart(pd.DataFrame(db.fetch_all(query2, params), columns=['day', 'minutes']),
-                                          time_range_str), self.chart_frame_tr)
+            results['figs']['tr'] = pm.create_daily_bar_chart(pd.DataFrame(db.fetch_all(query2, params), columns=['day', 'minutes']), time_range_str)
 
-            # NOTE: This still uses the old, less accurate query for broader ranges where precision is less critical.
             query3 = f"SELECT strftime('%H', s.start_time) as hour, SUM(s.duration_seconds)/60.0 as minutes FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY hour ORDER BY hour"
-            pm.embed_figure_in_frame(
-                pm.create_hourly_bar_chart(pd.DataFrame(db.fetch_all(query3, params), columns=['hour', 'minutes']),
-                                           time_range_str), self.chart_frame_bl)
+            results['figs']['bl'] = pm.create_hourly_bar_chart(pd.DataFrame(db.fetch_all(query3, params), columns=['hour', 'minutes']), time_range_str)
+            
+            results['figs']['br'] = pm.create_category_pie_chart(db.get_time_by_category(where_clause, params), time_range_str)
+        return results
 
-            pm.embed_figure_in_frame(
-                pm.create_category_pie_chart(db.get_time_by_category(where_clause, params), time_range_str),
-                self.chart_frame_br)
+    def _display_overview(self, results):
+        figs = results.get('figs', {})
+        time_range = results.get('time_range', 'Day')
+        
+        pm.embed_figure_in_frame(figs.get('tl'), self.chart_frame_tl)
+        pm.embed_figure_in_frame(figs.get('bl'), self.chart_frame_bl)
+        pm.embed_figure_in_frame(figs.get('br'), self.chart_frame_br)
+        
+        if time_range == "Day":
+            self._safe_set_frame_bg(self.chart_frame_tr, ("#DBDBDB", "#2B2B2B"))
+            for w in self.chart_frame_tr.winfo_children(): w.destroy()
+            ctk.CTkLabel(self.chart_frame_tr, text="Session Log", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=10, pady=(10, 5))
+            log_frame = ctk.CTkScrollableFrame(self.chart_frame_tr, fg_color="transparent")
+            log_frame.pack(fill="both", expand=True, padx=5)
+            
+            sessions = results['data'].get('sessions', [])
+            if not sessions:
+                ctk.CTkLabel(log_frame, text="No sessions logged.").pack(anchor="w", padx=10)
+            else:
+                for tag, start, end, duration in sessions:
+                    try:
+                        start_dt = datetime.fromisoformat(start)
+                        end_dt = datetime.fromisoformat(end)
+                        duration_str = str(timedelta(seconds=int(duration)))
+                        log_text = f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')} ({duration_str}) - {tag}"
+                        ctk.CTkLabel(log_frame, text=log_text).pack(anchor="w", padx=10)
+                    except: pass
+        else:
+             pm.embed_figure_in_frame(figs.get('tr'), self.chart_frame_tr)
 
-    def _render_health_correlation_page(self, start_date, end_date, where_clause, params):
-        # *** BUG FIX: Removed .reset_index() as it's now handled in the database manager ***
+    def _prepare_health_page(self, start_date, end_date, where_clause, params):
         df = db.get_health_and_study_data(start_date, end_date, where_clause, params)
-
         if not df.empty:
             for col in ['sleep_score', 'total_study_minutes', 'sleep_duration_seconds', 'body_battery', 'avg_stress']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             df['sleep_duration_hours'] = df['sleep_duration_seconds'] / 3600.0
+            
+        figs = {}
+        figs['tl'] = pm.create_correlation_scatter_plot(df, 'sleep_score', 'total_study_minutes', "Study vs. Sleep Score", "Sleep Score", "Study Minutes")
+        figs['tr'] = pm.create_correlation_scatter_plot(df, 'sleep_duration_hours', 'total_study_minutes', "Study vs. Sleep Duration", "Sleep Duration (Hours)", "Study Minutes")
+        figs['bl'] = pm.create_correlation_scatter_plot(df, 'avg_stress', 'total_study_minutes', "Study vs. Stress Level", "Average Stress Level", "Study Minutes")
+        figs['br'] = pm.create_trends_chart(df, self.view_mode.get())
+        return {'figs': figs}
 
-        pm.embed_figure_in_frame(
-            pm.create_correlation_scatter_plot(df, 'sleep_score', 'total_study_minutes', "Study vs. Sleep Score",
-                                               "Sleep Score", "Study Minutes"), self.chart_frame_tl)
-        pm.embed_figure_in_frame(pm.create_correlation_scatter_plot(df, 'sleep_duration_hours', 'total_study_minutes',
-                                                                    "Study vs. Sleep Duration",
-                                                                    "Sleep Duration (Hours)", "Study Minutes"),
-                                 self.chart_frame_tr)
-        pm.embed_figure_in_frame(
-            pm.create_correlation_scatter_plot(df, 'avg_stress', 'total_study_minutes', "Study vs. Stress Level",
-                                               "Average Stress Level", "Study Minutes"), self.chart_frame_bl)
-        # Always show trends (sleep and study) in the bottom-right for the health correlation page
-        pm.embed_figure_in_frame(pm.create_trends_chart(df, self.view_mode.get()), self.chart_frame_br)
+    def _display_health(self, results):
+        figs = results.get('figs', {})
+        pm.embed_figure_in_frame(figs.get('tl'), self.chart_frame_tl)
+        pm.embed_figure_in_frame(figs.get('tr'), self.chart_frame_tr)
+        pm.embed_figure_in_frame(figs.get('bl'), self.chart_frame_bl)
+        pm.embed_figure_in_frame(figs.get('br'), self.chart_frame_br)
 
-    def _render_numerical_stats_page(self, start_date, end_date, where_clause, params):
-        stats_data = db.get_numerical_analytics(start_date, end_date, where_clause, params)
+    # Legacy wrapper removed (overwritten above)
+    def _render_health_correlation_page_legacy_removed(self): pass
+
+    def _display_stats(self, stats_data):
         # Safely set background on the four chart containers. Some of these
         # widgets may have been replaced or destroyed during prior updates
         # (CTk wrappers create internal tk widgets which can be torn down),
@@ -572,13 +520,11 @@ class AnalyticsTab(ctk.CTkFrame):
                     try:
                         frame.configure(bg=BG_COLOR)
                     except Exception:
-                        # Some CustomTk widgets expect fg_color instead
                         try:
                             frame.configure(fg_color=BG_COLOR)
                         except Exception:
                             pass
             except Exception:
-                # If anything about the widget is invalid, skip it rather than crash
                 pass
 
         ctk.CTkLabel(self.chart_frame_tl, text="Overall Stats", font=ctk.CTkFont(size=16, weight="bold")).pack(
@@ -633,6 +579,80 @@ class AnalyticsTab(ctk.CTkFrame):
                          anchor="w").pack(anchor="w", padx=20)
         else:
             ctk.CTkLabel(self.chart_frame_br, text="Most Productive Day: N/A", anchor="w").pack(anchor="w", padx=20)
+
+    def _prepare_aw_page(self, start_date, end_date, where_clause, params):
+        df = db.get_health_and_study_data(start_date, end_date, where_clause, params)
+        if not df.empty:
+            for col in ['sleep_score', 'total_study_minutes', 'sleep_duration_seconds', 'body_battery', 'avg_stress']:
+                df[col] = pd.to_numeric(df.get(col, pd.Series()), errors='coerce')
+            df['sleep_duration_hours'] = df.get('sleep_duration_seconds', 0) / 3600.0
+
+        aw_rows = db.get_aw_daily(start_date.isoformat(), end_date.isoformat())
+        figs = {}
+        aw_stats = None
+        
+        if aw_rows:
+            aw_df = pd.DataFrame(aw_rows, columns=['date', 'active_seconds', 'app_summary'])
+            aw_df['date'] = pd.to_datetime(aw_df['date'])
+            aw_df['active_hours'] = aw_df['active_seconds'] / 3600.0
+
+            merged = df.copy()
+            if not merged.empty: merged['date'] = pd.to_datetime(merged['date'])
+            merged = merged.merge(aw_df[['date', 'active_hours']], on='date', how='left')
+
+            figs['tl'] = pm.create_correlation_scatter_plot(merged, 'active_hours', 'sleep_score', "AW Active Hours vs Sleep Score", "Active Hours (AW)", "Sleep Score")
+            figs['tr'] = pm.create_correlation_scatter_plot(merged, 'active_hours', 'sleep_duration_hours', "AW Active Hours vs Sleep Duration", "Active Hours (AW)", "Sleep Duration (Hours)")
+            figs['bl'] = pm.create_correlation_scatter_plot(merged, 'active_hours', 'avg_stress', "AW Active Hours vs Avg Stress", "Active Hours (AW)", "Avg Stress")
+            
+            # Aggregate stats for bottom right
+            app_totals = Counter()
+            for _, r in aw_df.iterrows():
+                try:
+                    app_map = json.loads(r['app_summary']) if r['app_summary'] else {}
+                except Exception:
+                    app_map = {}
+                for app_name, secs in app_map.items():
+                    try: app_totals[app_name] += float(secs)
+                    except: pass
+            
+            aw_daily_df = aw_df[['date', 'active_hours']].sort_values('date')
+            aw_stats = {'app_totals': app_totals, 'daily': aw_daily_df}
+            
+            # Prepare BR charts in BG
+            # Note: BR contains multiple charts in a scroll frame. We can create figures here and embed them later,
+            # but using pm.create...
+            # The original code created them on the fly. We'll generate a list of figures.
+            
+            top_apps = app_totals.most_common(10)
+            figs['br_top_apps'] = pm.create_aw_top_apps_bar(top_apps)
+            figs['br_timeline'] = pm.create_aw_daily_bar_chart(aw_daily_df)
+            
+        return {'figs': figs, 'has_data': bool(aw_rows)}
+
+    def _display_aw(self, results):
+        if not results.get('has_data'):
+             return # Original code didn't handle no data explicitly well, but we can just do nothing
+             
+        figs = results.get('figs', {})
+        pm.embed_figure_in_frame(figs.get('tl'), self.chart_frame_tl)
+        pm.embed_figure_in_frame(figs.get('tr'), self.chart_frame_tr)
+        pm.embed_figure_in_frame(figs.get('bl'), self.chart_frame_bl)
+        
+        for w in self.chart_frame_br.winfo_children(): w.destroy()
+        scroll = ctk.CTkScrollableFrame(self.chart_frame_br, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=6, pady=6)
+        
+        # We need a frame helper since scrollable frame doesn't support embedding directly easily or pm expects frame info
+        # Actually pm.embed_figure_in_frame clears children. We want multiple charts.
+        # So we manually create frames inside scroll
+        
+        f1 = tk.Frame(scroll, bg=BG_COLOR, height=250)
+        f1.pack(fill="x", expand=False, pady=5)
+        pm.embed_figure_in_frame(figs.get('br_top_apps'), f1)
+        
+        f2 = tk.Frame(scroll, bg=BG_COLOR, height=250)
+        f2.pack(fill="x", expand=False, pady=5)
+        pm.embed_figure_in_frame(figs.get('br_timeline'), f2)
 
     def _render_modeling_page(self, start_date, end_date, where_clause, params):
         # Robustly attempt to set background on the four chart containers. We've seen sporadic
