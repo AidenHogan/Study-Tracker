@@ -55,30 +55,42 @@ class TrackerTab(ctk.CTkFrame):
         ctk.CTkButton(left_frame, text="Manual Session Entry", command=self.app.add_session_popup).pack(pady=5, padx=20,
                                                                                                         fill="x")
 
+        # --- Updated Struggle Frame (Custom Time) ---
         self.struggle_frame = ctk.CTkFrame(left_frame)
         self.struggle_frame.pack(pady=10, padx=20, fill="x")
-        self.struggle_frame.columnconfigure(0, weight=1)
-        self.struggle_timer_button = ctk.CTkButton(self.struggle_frame, text="Start Struggle Timer (20 min)",
+        self.struggle_frame.columnconfigure(2, weight=1)  # Button takes remaining space
+
+        # Input for custom minutes
+        self.struggle_duration_entry = ctk.CTkEntry(self.struggle_frame, width=50, placeholder_text="20", justify="center")
+        self.struggle_duration_entry.insert(0, "20")  # Default value
+        self.struggle_duration_entry.grid(row=0, column=0, padx=(5, 2), pady=5)
+
+        ctk.CTkLabel(self.struggle_frame, text="min").grid(row=0, column=1, padx=(0, 5))
+
+        self.struggle_timer_button = ctk.CTkButton(self.struggle_frame, text="Start Struggle",
                                                    fg_color="#524bdb", hover_color="#423db0",
                                                    command=self.toggle_struggle_timer)
-        self.struggle_timer_button.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        self.struggle_time_label = ctk.CTkLabel(self.struggle_frame, text="")
-        self.struggle_time_label.grid(row=0, column=1, padx=(5, 0))
+        self.struggle_timer_button.grid(row=0, column=2, sticky="ew", padx=(0, 5))
+        
+        self.struggle_time_label = ctk.CTkLabel(self.struggle_frame, text="", width=40)
+        self.struggle_time_label.grid(row=0, column=3, padx=(0, 5))
 
         self.sessions_title_label = ctk.CTkLabel(left_frame, text="Sessions for Today", font=ctk.CTkFont(size=16, weight="bold"))
         self.sessions_title_label.pack(pady=(10, 5))
         self.sessions_frame = ctk.CTkScrollableFrame(left_frame, label_text="")
         self.sessions_frame.pack(pady=10, padx=20, fill="both", expand=True)
 
-        # --- Right Frame ---
+        # --- Right Frame (Stats & Calendar) ---
         right_frame = ctk.CTkFrame(self)
         right_frame.grid(row=0, column=1, padx=(0, 10), pady=10, sticky="nsew")
         right_frame.grid_columnconfigure(0, weight=1)
-        right_frame.grid_rowconfigure(1, weight=1)  # Note: Changed row 2 to 1 for stats+calendar
+        right_frame.grid_rowconfigure(1, weight=1)
 
         stats_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
         stats_frame.grid(row=0, column=0, padx=20, pady=20, sticky="ew")
         stats_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        
+        # These are the labels causing the AttributeError
         self.today_focus_label = ctk.CTkLabel(stats_frame, text="Today's Focus\n--")
         self.today_focus_label.grid(row=0, column=0, padx=5, pady=5)
         self.week_focus_label = ctk.CTkLabel(stats_frame, text="This Week\n--")
@@ -87,6 +99,7 @@ class TrackerTab(ctk.CTkFrame):
         self.daily_avg_label.grid(row=0, column=2, padx=5, pady=5)
         self.total_focus_label = ctk.CTkLabel(stats_frame, text="Lifetime Focus\n--")
         self.total_focus_label.grid(row=0, column=3, padx=5, pady=5)
+        
         self.current_streak_label = ctk.CTkLabel(stats_frame, text="Current Streak\n-- days")
         self.current_streak_label.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
         self.best_streak_label = ctk.CTkLabel(stats_frame, text="Best Streak\n-- days")
@@ -96,6 +109,7 @@ class TrackerTab(ctk.CTkFrame):
         calendar_frame.grid(row=1, column=0, padx=20, pady=10, sticky="nsew")
         calendar_frame.grid_columnconfigure(0, weight=1)
         calendar_frame.grid_rowconfigure(1, weight=1)
+        
         calendar_header = ctk.CTkFrame(calendar_frame, fg_color="transparent")
         calendar_header.pack(fill="x", pady=10, padx=10)
         calendar_header.columnconfigure(1, weight=1)
@@ -103,6 +117,7 @@ class TrackerTab(ctk.CTkFrame):
         self.month_year_label = ctk.CTkLabel(calendar_header, text="", font=ctk.CTkFont(size=16, weight="bold"))
         self.month_year_label.grid(row=0, column=1)
         ctk.CTkButton(calendar_header, text=">", width=30, command=self.next_month).grid(row=0, column=2)
+        
         self.calendar_grid = ctk.CTkFrame(calendar_frame, fg_color="transparent")
         self.calendar_grid.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -303,15 +318,30 @@ class TrackerTab(ctk.CTkFrame):
 
     def toggle_struggle_timer(self):
         if self.struggle_timer_job:
+            # Stop the timer
             self.after_cancel(self.struggle_timer_job)
             self.struggle_timer_job = None
             self.struggle_time_label.configure(text="")
-            self.struggle_timer_button.configure(text="Start Struggle Timer (20 min)", fg_color="#524bdb",
-                                                 hover_color="#423db0")
+            
+            # Reset UI
+            self.struggle_timer_button.configure(text="Start Struggle", fg_color="#524bdb", hover_color="#423db0")
+            self.struggle_duration_entry.configure(state="normal") # Re-enable input
         else:
-            self.struggle_seconds_left = 20 * 60
+            # Start the timer
+            try:
+                minutes = int(self.struggle_duration_entry.get())
+                if minutes <= 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Invalid Time", "Please enter a valid number of minutes (integer > 0).")
+                return
+
+            self.struggle_seconds_left = minutes * 60
             self.update_struggle_timer()
-            self.struggle_timer_button.configure(text="Cancel Timer", fg_color="#db524b", hover_color="#b0423d")
+            
+            # Update UI
+            self.struggle_timer_button.configure(text="Cancel", fg_color="#db524b", hover_color="#b0423d")
+            self.struggle_duration_entry.configure(state="disabled") # Disable input while running
 
     def update_struggle_timer(self):
         if self.struggle_seconds_left > 0:
@@ -320,8 +350,9 @@ class TrackerTab(ctk.CTkFrame):
             self.struggle_seconds_left -= 1
             self.struggle_timer_job = self.after(1000, self.update_struggle_timer)
         else:
-            self.toggle_struggle_timer()
-            messagebox.showinfo("Time's Up!", "20 minutes of productive struggle is complete!")
+            # Timer Finished naturally
+            self.toggle_struggle_timer() # This will reset the button text and re-enable the entry
+            messagebox.showinfo("Time's Up!", "Struggle session complete!")
 
     def prev_month(self):
         self.current_calendar_date = (self.current_calendar_date.replace(day=1) - timedelta(days=1))
