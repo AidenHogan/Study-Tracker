@@ -8,3 +8,6 @@ correlation, but may be using really limited data
 
 
 4th page of analytics tab is squished vertically
+^In finally fixing that, I used a SET resolution, which is problematic for compatability with other devices.
+Additionally, it's messed up other pages, like the 2nd one, where the bottom is very squished in comparison to the top.
+Sometimes but not always.  It's odd, it varies and I can't figure out why.
