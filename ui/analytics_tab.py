@@ -709,9 +709,7 @@ class AnalyticsTab(ctk.CTkFrame):
 
         # Analysis-type specific rendering
         if analysis_type == "CCF":
-            # Hide bottom row for single-row layouts and clear them
-            for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
-            for widget in self.chart_frame_br.winfo_children(): widget.destroy()
+            # Hide bottom row for single-row layouts
             self.chart_frame_bl.grid_remove()
             self.chart_frame_br.grid_remove()
             
@@ -737,8 +735,6 @@ class AnalyticsTab(ctk.CTkFrame):
 
         elif analysis_type == "Event Study":
             # Hide bottom row
-            for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
-            for widget in self.chart_frame_br.winfo_children(): widget.destroy()
             self.chart_frame_bl.grid_remove()
             self.chart_frame_br.grid_remove()
             
@@ -767,8 +763,6 @@ class AnalyticsTab(ctk.CTkFrame):
 
         elif analysis_type == "Quantile":
             # Hide bottom row
-            for widget in self.chart_frame_bl.winfo_children(): widget.destroy()
-            for widget in self.chart_frame_br.winfo_children(): widget.destroy()
             self.chart_frame_bl.grid_remove()
             self.chart_frame_br.grid_remove()
             

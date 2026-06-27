@@ -41,150 +41,73 @@ def _setup_base_chart(title, xlabel=None, ylabel=None):
 
 
 def embed_figure_in_frame(fig, frame):
-    """Clears a frame and embeds a Matplotlib figure in it, resizing with the frame."""
-    for widget in frame.winfo_children():
-        widget.destroy()
+    """Embeds or updates a Matplotlib figure in a frame with persistent canvas recycling."""
     if not fig:
         return
 
-    debug = os.environ.get("ST_DEBUG_LAYOUT") == "1"
-    # Try to set the figure DPI to match the screen for accurate pixel sizing
-    try:
-        screen_dpi = frame.winfo_fpixels('1i')
-        fig.set_dpi(screen_dpi)
-    except Exception:
-        screen_dpi = fig.get_dpi() or 100
-
-    canvas = FigureCanvasTkAgg(fig, master=frame)
-    widget = canvas.get_tk_widget()
-    # Widget visual tweaks
-    try:
-        widget.configure(background=BG_COLOR)
-    except Exception:
+    # 1. Define the resize logic (the same logic you had)
+    def _on_resize(event, fig=fig, frame=frame):
+        # We need the canvas associated with THIS frame
+        canvas = getattr(frame, '_canvas_widget', None)
+        widget = canvas.get_tk_widget() if canvas else None
+        if not widget: return
+        
         try:
-            widget.configure(bg=BG_COLOR)
-        except Exception:
-            pass
-    for opt in ("highlightthickness", "borderwidth", "bd", "highlightbackground"):
-        try:
-            if opt == "highlightbackground":
-                widget.configure(**{opt: BG_COLOR})
-            else:
-                widget.configure(**{opt: 0})
-        except Exception:
-            pass
-
-    # Place the canvas slightly inset inside the frame to avoid CTk frame masking
-    # Use absolute placement so we control the exact pixel inset the canvas occupies.
-    try:
-        fw, fh = frame.winfo_width(), frame.winfo_height()
-        widget.place(x=3, y=3, width=max(fw - 6, 50), height=max(fh - 6, 50))
-    except Exception:
-        # Fallback to pack if place is not available for some reason
-        widget.pack(fill="both", expand=True, padx=3, pady=3)
-
-    # Keep references to avoid premature GC (and invalid Tcl command names)
-    try:
-        widget._figure_canvas = canvas
-        widget._mpl_fig = fig
-        canvas._mpl_fig = fig
-    except Exception:
-        pass
-
-    def _on_resize(event, canvas=canvas, fig=fig, frame=frame, widget=widget):
-        try:
-            # Use the containing frame's inner size as the authoritative target
-            try:
-                frame.update_idletasks()
-            except Exception:
-                pass
+            frame.update_idletasks()
             widget_w = max(frame.winfo_width() - 6, 50)
             widget_h = max(frame.winfo_height() - 6, 50)
             dpi = fig.get_dpi() or 100
-            # Resize the placed widget to exactly fit the available inner region
-            try:
-                widget.place_configure(width=widget_w, height=widget_h)
-            except Exception:
-                try:
-                    widget.config(width=widget_w, height=widget_h)
-                except Exception:
-                    pass
+            
+            widget.place_configure(width=widget_w, height=widget_h)
 
-            # Progressive fit: set figure size, draw, then check bounding box vs widget size.
-            # If the figure is larger than the widget (due to rounding/constrained_layout),
-            # shrink it slightly and retry a few times.
             max_iters = 6
-            target_w_px = widget_w
-            target_h_px = widget_h
+            target_w, target_h = widget_w, widget_h
             for _ in range(max_iters):
-                fig.set_size_inches(target_w_px / dpi, target_h_px / dpi, forward=True)
-                try:
-                    # Ensure constrained_layout recalculates
-                    if hasattr(fig, 'set_constrained_layout'):
-                        fig.set_constrained_layout(True)
-                except Exception:
-                    pass
-                try:
-                    canvas.draw()
-                except Exception:
-                    try:
-                        canvas.draw_idle()
-                    except Exception:
-                        pass
-
-                # Get rendered figure bbox in pixels
-                fig_bbox = fig.bbox
-                fig_w_px = fig_bbox.width
-                fig_h_px = fig_bbox.height
-
-                # If the rendered fig is larger than widget, reduce target and retry
-                over_w = fig_w_px - widget_w
-                over_h = fig_h_px - widget_h
-                if over_w <= 1 and over_h <= 1:
+                fig.set_size_inches(target_w / dpi, target_h / dpi, forward=True)
+                canvas.draw_idle()
+                
+                fig_w, fig_h = fig.bbox.width, fig.bbox.height
+                if (fig_w - widget_w) <= 1 and (fig_h - widget_h) <= 1:
                     break
-                # subtract the larger of the two overflows plus small margin
-                reduce_w = max(int(np.ceil(over_w)) + 2, 0)
-                reduce_h = max(int(np.ceil(over_h)) + 2, 0)
-                if reduce_w == 0 and reduce_h == 0:
-                    break
-                target_w_px = max(target_w_px - reduce_w, 50)
-                target_h_px = max(target_h_px - reduce_h, 50)
-
-            if debug:
-                print(f"[plot_manager] on_resize: widget size={event.width}x{event.height}, target fig px={target_w_px}x{target_h_px}, rendered fig px={fig_w_px}x{fig_h_px}, dpi={dpi}")
+                target_w = max(target_w - max(int(np.ceil(fig_w - widget_w)) + 2, 0), 50)
+                target_h = max(target_h - max(int(np.ceil(fig_h - widget_h)) + 2, 0), 50)
         except Exception:
             pass
 
-    # Bind resize and trigger initial draw
-    try:
-        # Bind to the containing frame's resize so we can place the canvas exactly
-        frame._on_resize_cb = _on_resize
-        frame.bind("<Configure>", _on_resize)
-    except Exception:
-        try:
-            frame.bind("<Configure>", _on_resize)
-        except Exception:
-            pass
+    # 2. Check for existing canvas
+    existing_canvas = getattr(frame, '_canvas_widget', None)
+    
+    if existing_canvas and existing_canvas.get_tk_widget().winfo_exists():
+        # --- RECYCLE PATH ---
+        plt.close(existing_canvas.figure)
+        existing_canvas.figure = fig
+        fig.set_canvas(existing_canvas)
+        
+        # Update the resize callback to use the NEW fig
+        if hasattr(frame, '_on_resize_cb'):
+            frame.unbind("<Configure>", frame._on_resize_cb)
+        
+        frame._on_resize_cb = frame.bind("<Configure>", _on_resize)
+        existing_canvas.draw_idle()
+    else:
+        # --- FIRST-TIME PATH ---
+        for widget in list(frame.winfo_children()):
+            widget.destroy()
 
-    try:
+        canvas = FigureCanvasTkAgg(fig, master=frame)
+        widget = canvas.get_tk_widget()
+        
+        # Apply your styles
+        widget.configure(bg=BG_COLOR)
+        widget.place(x=3, y=3, width=50, height=50) # Initial dummy size
+        
+        frame._canvas_widget = canvas
+        frame._on_resize_cb = frame.bind("<Configure>", _on_resize)
+        
         canvas.draw_idle()
-    except Exception:
-        try:
-            warnings.filterwarnings("ignore", message="constrained_layout not applied")
-            canvas.draw_idle()
-        except Exception:
-            pass
 
-    # If initial frame height is very small (common during first render race), schedule a deferred resize
-    try:
-        frame.update_idletasks()
-        if frame.winfo_height() < 120:
-            frame.after(180, lambda: frame.event_generate('<Configure>'))
-    except Exception:
-        pass
-
-    # No need to call plt.close(fig) as we are using Figure() directly and it's not managed by pyplot
-
+    # Initial trigger
+    frame.after(50, lambda: frame.event_generate('<Configure>'))
 
 def create_pie_chart(data, time_range):
     """Creates a pie chart of time by subject."""
