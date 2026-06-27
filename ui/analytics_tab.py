@@ -238,9 +238,8 @@ class AnalyticsTab(ctk.CTkFrame):
         # Cancel the previous timer if the user clicked again too fast
         if hasattr(self, '_debounce_timer'):
             self.after_cancel(self._debounce_timer)
-        # Start a new timer. 
-        # The app will wait 400ms. If no new clicks happen, it runs update_charts.
-        self._debounce_timer = self.after(800, self.update_charts)
+        # The app will wait 300ms. If no new clicks happen, it runs update_charts.
+        self._debounce_timer = self.after(300, self.update_charts)
 
     def _cycle_chart_page(self, direction):
         self.page = (self.page + direction) % self.max_pages
@@ -448,44 +447,49 @@ class AnalyticsTab(ctk.CTkFrame):
         # Simply re-trigger update if needed
         self.update_charts()
 
-    # In ui/analytics_tab.py, find the _render_overview_page function and replace it with this updated version.
-
+    
     def _prepare_overview_page(self, start_date, end_date, where_clause, params, time_range_str):
         if not isinstance(time_range_str, str) or "ctk" in str(time_range_str).lower():
             time_range_str = "Day"
             
-        results = {'figs': {}, 'data': {}, 'time_range': time_range_str}
+        results = {'data': {}, 'time_range': time_range_str}
+        
+        # Top Left Data
+        query1 = f"SELECT s.tag, SUM(s.duration_seconds), t.color FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY s.tag"
+        results['data']['tl_data'] = db.fetch_all(query1, params)
         
         if time_range_str == "Day":
-            query1 = f"SELECT s.tag, SUM(s.duration_seconds), t.color FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY s.tag"
-            results['figs']['tl'] = pm.create_pie_chart(db.fetch_all(query1, params), time_range_str)
-            
+            # Session Log Data
             day_sessions_query = f"SELECT s.tag, s.start_time, s.end_time, s.duration_seconds FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} ORDER BY s.start_time"
             results['data']['sessions'] = db.fetch_all(day_sessions_query, params)
             
-            hourly_df = db.get_hourly_breakdown_for_day(start_date.isoformat(), where_clause, params)
-            results['figs']['bl'] = pm.create_hourly_bar_chart(hourly_df, time_range_str)
-            results['figs']['br'] = pm.create_category_pie_chart(db.get_time_by_category(where_clause, params), time_range_str)
+            # Hourly Data
+            results['data']['hourly_df'] = db.get_hourly_breakdown_for_day(start_date.isoformat(), where_clause, params)
         else:
-            query1 = f"SELECT s.tag, SUM(s.duration_seconds), t.color FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY s.tag"
-            results['figs']['tl'] = pm.create_pie_chart(db.fetch_all(query1, params), time_range_str)
-
+            # Daily Trends Data
             query2 = f"SELECT strftime('%Y-%m-%d', s.start_time) as day, SUM(s.duration_seconds)/60.0 as minutes FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY day ORDER BY day"
-            results['figs']['tr'] = pm.create_daily_bar_chart(pd.DataFrame(db.fetch_all(query2, params), columns=['day', 'minutes']), time_range_str)
+            results['data']['daily_df'] = pd.DataFrame(db.fetch_all(query2, params), columns=['day', 'minutes'])
 
+            # Hourly Data
             query3 = f"SELECT strftime('%H', s.start_time) as hour, SUM(s.duration_seconds)/60.0 as minutes FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY hour ORDER BY hour"
-            results['figs']['bl'] = pm.create_hourly_bar_chart(pd.DataFrame(db.fetch_all(query3, params), columns=['hour', 'minutes']), time_range_str)
+            results['data']['hourly_df'] = pd.DataFrame(db.fetch_all(query3, params), columns=['hour', 'minutes'])
             
-            results['figs']['br'] = pm.create_category_pie_chart(db.get_time_by_category(where_clause, params), time_range_str)
+        # Bottom Right Category Data
+        results['data']['category_data'] = db.get_time_by_category(where_clause, params)
         return results
 
     def _display_overview(self, results):
-        figs = results.get('figs', {})
+        data = results.get('data', {})
         time_range = results.get('time_range', 'Day')
         
-        pm.embed_figure_in_frame(figs.get('tl'), self.chart_frame_tl)
-        pm.embed_figure_in_frame(figs.get('bl'), self.chart_frame_bl)
-        pm.embed_figure_in_frame(figs.get('br'), self.chart_frame_br)
+        # Generate figures on the main thread
+        fig_tl = pm.create_pie_chart(data.get('tl_data'), time_range)
+        fig_bl = pm.create_hourly_bar_chart(data.get('hourly_df'), time_range)
+        fig_br = pm.create_category_pie_chart(data.get('category_data'), time_range)
+
+        pm.embed_figure_in_frame(fig_tl, self.chart_frame_tl)
+        pm.embed_figure_in_frame(fig_bl, self.chart_frame_bl)
+        pm.embed_figure_in_frame(fig_br, self.chart_frame_br)
         
         if time_range == "Day":
             self._safe_set_frame_bg(self.chart_frame_tr, ("#DBDBDB", "#2B2B2B"))
@@ -494,7 +498,7 @@ class AnalyticsTab(ctk.CTkFrame):
             log_frame = ctk.CTkScrollableFrame(self.chart_frame_tr, fg_color="transparent")
             log_frame.pack(fill="both", expand=True, padx=5)
             
-            sessions = results['data'].get('sessions', [])
+            sessions = data.get('sessions', [])
             if not sessions:
                 ctk.CTkLabel(log_frame, text="No sessions logged.").pack(anchor="w", padx=10)
             else:
@@ -507,7 +511,8 @@ class AnalyticsTab(ctk.CTkFrame):
                         ctk.CTkLabel(log_frame, text=log_text).pack(anchor="w", padx=10)
                     except: pass
         else:
-             pm.embed_figure_in_frame(figs.get('tr'), self.chart_frame_tr)
+            fig_tr = pm.create_daily_bar_chart(data.get('daily_df'), time_range)
+            pm.embed_figure_in_frame(fig_tr, self.chart_frame_tr)
 
     def _prepare_health_page(self, start_date, end_date, where_clause, params):
         df = db.get_health_and_study_data(start_date, end_date, where_clause, params)
@@ -516,22 +521,22 @@ class AnalyticsTab(ctk.CTkFrame):
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             df['sleep_duration_hours'] = df['sleep_duration_seconds'] / 3600.0
             
-        figs = {}
-        figs['tl'] = pm.create_correlation_scatter_plot(df, 'sleep_score', 'total_study_minutes', "Study vs. Sleep Score", "Sleep Score", "Study Minutes")
-        figs['tr'] = pm.create_correlation_scatter_plot(df, 'sleep_duration_hours', 'total_study_minutes', "Study vs. Sleep Duration", "Sleep Duration (Hours)", "Study Minutes")
-        figs['bl'] = pm.create_correlation_scatter_plot(df, 'avg_stress', 'total_study_minutes', "Study vs. Stress Level", "Average Stress Level", "Study Minutes")
-        figs['br'] = pm.create_trends_chart(df, self.view_mode.get())
-        return {'figs': figs}
+        return {'df': df} 
 
     def _display_health(self, results):
-        figs = results.get('figs', {})
-        pm.embed_figure_in_frame(figs.get('tl'), self.chart_frame_tl)
-        pm.embed_figure_in_frame(figs.get('tr'), self.chart_frame_tr)
-        pm.embed_figure_in_frame(figs.get('bl'), self.chart_frame_bl)
-        pm.embed_figure_in_frame(figs.get('br'), self.chart_frame_br)
+        df = results.get('df')
+        
+        # Generate figures on the main thread
+        fig_tl = pm.create_correlation_scatter_plot(df, 'sleep_score', 'total_study_minutes', "Study vs. Sleep Score", "Sleep Score", "Study Minutes")
+        fig_tr = pm.create_correlation_scatter_plot(df, 'sleep_duration_hours', 'total_study_minutes', "Study vs. Sleep Duration", "Sleep Duration (Hours)", "Study Minutes")
+        fig_bl = pm.create_correlation_scatter_plot(df, 'avg_stress', 'total_study_minutes', "Study vs. Stress Level", "Average Stress Level", "Study Minutes")
+        fig_br = pm.create_trends_chart(df, self.view_mode.get())
 
-    # Legacy wrapper removed (overwritten above)
-    def _render_health_correlation_page_legacy_removed(self): pass
+        pm.embed_figure_in_frame(fig_tl, self.chart_frame_tl)
+        pm.embed_figure_in_frame(fig_tr, self.chart_frame_tr)
+        pm.embed_figure_in_frame(fig_bl, self.chart_frame_bl)
+        pm.embed_figure_in_frame(fig_br, self.chart_frame_br)
+
 
     def _display_stats(self, stats_data):
         # Safely set background on the four chart containers. Some of these
@@ -612,8 +617,7 @@ class AnalyticsTab(ctk.CTkFrame):
             df['sleep_duration_hours'] = df.get('sleep_duration_seconds', 0) / 3600.0
 
         aw_rows = db.get_aw_daily(start_date.isoformat(), end_date.isoformat())
-        figs = {}
-        aw_stats = None
+        result_data = {'has_data': bool(aw_rows), 'merged': None, 'top_apps': [], 'aw_daily_df': None}
         
         if aw_rows:
             aw_df = pd.DataFrame(aw_rows, columns=['date', 'active_seconds', 'app_summary'])
@@ -623,12 +627,8 @@ class AnalyticsTab(ctk.CTkFrame):
             merged = df.copy()
             if not merged.empty: merged['date'] = pd.to_datetime(merged['date'])
             merged = merged.merge(aw_df[['date', 'active_hours']], on='date', how='left')
+            result_data['merged'] = merged
 
-            figs['tl'] = pm.create_correlation_scatter_plot(merged, 'active_hours', 'sleep_score', "AW Active Hours vs Sleep Score", "Active Hours (AW)", "Sleep Score")
-            figs['tr'] = pm.create_correlation_scatter_plot(merged, 'active_hours', 'sleep_duration_hours', "AW Active Hours vs Sleep Duration", "Active Hours (AW)", "Sleep Duration (Hours)")
-            figs['bl'] = pm.create_correlation_scatter_plot(merged, 'active_hours', 'avg_stress', "AW Active Hours vs Avg Stress", "Active Hours (AW)", "Avg Stress")
-            
-            # Aggregate stats for bottom right
             app_totals = Counter()
             for _, r in aw_df.iterrows():
                 try:
@@ -639,44 +639,42 @@ class AnalyticsTab(ctk.CTkFrame):
                     try: app_totals[app_name] += float(secs)
                     except: pass
             
-            aw_daily_df = aw_df[['date', 'active_hours']].sort_values('date')
-            aw_stats = {'app_totals': app_totals, 'daily': aw_daily_df}
+            result_data['aw_daily_df'] = aw_df[['date', 'active_hours']].sort_values('date')
+            result_data['top_apps'] = app_totals.most_common(10)
             
-            # Prepare BR charts in BG
-            # Note: BR contains multiple charts in a scroll frame. We can create figures here and embed them later,
-            # but using pm.create...
-            # The original code created them on the fly. We'll generate a list of figures.
-            
-            top_apps = app_totals.most_common(10)
-            figs['br_top_apps'] = pm.create_aw_top_apps_bar(top_apps)
-            figs['br_timeline'] = pm.create_aw_daily_bar_chart(aw_daily_df)
-            
-        return {'figs': figs, 'has_data': bool(aw_rows)}
+        return result_data
 
     def _display_aw(self, results):
         if not results.get('has_data'):
-             return # Original code didn't handle no data explicitly well, but we can just do nothing
+             return 
              
-        figs = results.get('figs', {})
-        pm.embed_figure_in_frame(figs.get('tl'), self.chart_frame_tl)
-        pm.embed_figure_in_frame(figs.get('tr'), self.chart_frame_tr)
-        pm.embed_figure_in_frame(figs.get('bl'), self.chart_frame_bl)
+        merged = results['merged']
+        top_apps = results['top_apps']
+        aw_daily_df = results['aw_daily_df']
+
+        # Generate on main thread
+        fig_tl = pm.create_correlation_scatter_plot(merged, 'active_hours', 'sleep_score', "AW Active Hours vs Sleep Score", "Active Hours (AW)", "Sleep Score")
+        fig_tr = pm.create_correlation_scatter_plot(merged, 'active_hours', 'sleep_duration_hours', "AW Active Hours vs Sleep Duration", "Active Hours (AW)", "Sleep Duration (Hours)")
+        fig_bl = pm.create_correlation_scatter_plot(merged, 'active_hours', 'avg_stress', "AW Active Hours vs Avg Stress", "Active Hours (AW)", "Avg Stress")
+        
+        fig_br_top = pm.create_aw_top_apps_bar(top_apps)
+        fig_br_timeline = pm.create_aw_daily_bar_chart(aw_daily_df)
+
+        pm.embed_figure_in_frame(fig_tl, self.chart_frame_tl)
+        pm.embed_figure_in_frame(fig_tr, self.chart_frame_tr)
+        pm.embed_figure_in_frame(fig_bl, self.chart_frame_bl)
         
         for w in self.chart_frame_br.winfo_children(): w.destroy()
         scroll = ctk.CTkScrollableFrame(self.chart_frame_br, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=6, pady=6)
         
-        # We need a frame helper since scrollable frame doesn't support embedding directly easily or pm expects frame info
-        # Actually pm.embed_figure_in_frame clears children. We want multiple charts.
-        # So we manually create frames inside scroll
-        
         f1 = tk.Frame(scroll, bg=BG_COLOR, height=250)
         f1.pack(fill="x", expand=False, pady=5)
-        pm.embed_figure_in_frame(figs.get('br_top_apps'), f1)
+        pm.embed_figure_in_frame(fig_br_top, f1)
         
         f2 = tk.Frame(scroll, bg=BG_COLOR, height=250)
         f2.pack(fill="x", expand=False, pady=5)
-        pm.embed_figure_in_frame(figs.get('br_timeline'), f2)
+        pm.embed_figure_in_frame(fig_br_timeline, f2)
 
     def _render_modeling_page(self, start_date, end_date, where_clause, params):
         # Robustly attempt to set background on the four chart containers. We've seen sporadic
