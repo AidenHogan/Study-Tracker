@@ -25,7 +25,6 @@ class TrackerTab(ctk.CTkFrame):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
         self._create_widgets()
-        # self.update_displays() # The main app will call this after initialization
 
     def _create_widgets(self):
         # --- Left Frame ---
@@ -291,7 +290,7 @@ class TrackerTab(ctk.CTkFrame):
     def delete_session(self, session_id):
         if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this session?"):
             db.delete_session(session_id)
-            self.app.update_all_displays()
+            self.update_displays()
 
     def toggle_timer(self):
         if self.timer_running:
@@ -300,7 +299,7 @@ class TrackerTab(ctk.CTkFrame):
             end_time = datetime.now()
             duration = (end_time - self.start_time).total_seconds()
             db.add_session(self.tag_combobox.get(), self.start_time, end_time, duration, notes="")
-            self.app.update_all_displays()
+            self.update_displays()
         else:
             if not self.tag_combobox.get():
                 messagebox.showwarning("No Tag", "Please select or create a tag before starting.");

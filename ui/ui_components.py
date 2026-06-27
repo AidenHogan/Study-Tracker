@@ -193,8 +193,7 @@ class TagManagementWindow(ctk.CTkToplevel):
 
     def refresh_all(self):
         self.load_categories()
-        self.load_tags()
-        self.master_app.update_all_displays()
+        self.load_tags()    
 
     def load_categories(self):
         for widget in self.category_list_frame.winfo_children(): widget.destroy()
@@ -236,17 +235,17 @@ class TagManagementWindow(ctk.CTkToplevel):
         success, message = db.add_category(cat_name)
         if success:
             self.new_cat_entry.delete(0, 'end')
-            self.refresh_all()
+            self.load_categories()
         else:
             messagebox.showwarning("Duplicate", message, parent=self)
 
     def delete_category(self, name):
         db.delete_category(name)
-        self.refresh_all()
+        self.load_categories()
 
     def assign_category(self, tag_name, category_name):
         db.update_tag_category(tag_name, category_name)
-        self.refresh_all()  # Refresh to ensure data consistency
+        self.load_categories()
 
     def add_tag(self):
         new_tag = self.new_tag_entry.get()
@@ -254,7 +253,7 @@ class TagManagementWindow(ctk.CTkToplevel):
         success, message = db.add_tag(new_tag)
         if success:
             self.new_tag_entry.delete(0, 'end')
-            self.refresh_all()
+            self.load_tags()
         else:
             messagebox.showwarning("Duplicate", message, parent=self)
 
@@ -297,17 +296,6 @@ class TagManagementWindow(ctk.CTkToplevel):
         except Exception:
             pass
 
-        # Schedule a full refresh shortly after so heavy computations happen after UI becomes responsive.
-        try:
-            # Use a small delay so the UI updates first and avoids the OS marking the window as not-responding.
-            self.after(600, lambda: self.master_app.update_all_displays())
-        except Exception:
-            # Fallback to immediate refresh if scheduling fails
-            try:
-                self.master_app.update_all_displays()
-            except Exception:
-                pass
-
     def restore_archived_tags(self):
         # Simple picker window listing archived tags to restore
         archived = [row[0] for row in db.get_tags(include_hidden=True) if row[0] not in [t[0] for t in db.get_tags()]]
@@ -337,7 +325,7 @@ class TagManagementWindow(ctk.CTkToplevel):
         new_color = colorchooser.askcolor(initialcolor=old_color, title=f"Select color for {tag_name}")
         if new_color and new_color[1]:
             db.update_tag_color(tag_name, new_color[1])
-            self.refresh_all()
+            self.load_tags()
 
 
 class ManualHealthEntryWindow(ctk.CTkToplevel):

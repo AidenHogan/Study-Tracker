@@ -23,7 +23,7 @@ from ui.health_tab import HealthTab
 from ui.activitywatch_tab import ActivityWatchTab
 
 
-# --- Application Constants ---
+# Application Constants TODO: set these to be more adjustable
 APP_WIDTH = 1200
 APP_HEIGHT = 850
 
@@ -198,10 +198,10 @@ class StudyTrackerApp(ctk.CTk):
             count, message = data_importer.import_garmin_csv(filepath)
             if count > 0:
                 messagebox.showinfo("Success", f"Successfully synced and imported {count} health record(s).")
+                self.update_all_displays()
             else:
                 messagebox.showwarning("No New Data",
                                        message or "No new health records were found.")
-            self.update_all_displays()
         except garmin_downloader.GarthException as e:
             # Check if it's an authentication error
             error_msg = str(e)
