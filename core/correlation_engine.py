@@ -670,7 +670,7 @@ def run_pls_analysis_full(start_date, end_date, where_clause, params, n_componen
     n_rows = model_df.shape[0]
     n_feats = len(features)
     if n_rows < 15:
-        return {"error": f"Not enough data for PLS (need >=15 rows, have {n_rows})."}
+        return {"error": f"Not enough data for PLS (need >=15 rows, have {n_rows}).\n Try using imputed data"}
     if n_feats < 2:
         return {"error": f"PLS requires at least 2 feature columns with enough data (have {n_feats})."}
     X = model_df[features].values

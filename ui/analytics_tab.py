@@ -436,8 +436,13 @@ class AnalyticsTab(ctk.CTkFrame):
                              if mtype in display_map: display_map[mtype](payload)
              except Exception as e:
                  self._show_error(f"Render error: {e}")
+        
+        #Makes update_charts() run in a background thread
+        def thread_target():
+            result = bg_worker() 
+            self.after(0, lambda: finish(result))
 
-        threading.Thread(target=lambda: self.after(0, lambda: finish(bg_worker())), daemon=True).start()
+        threading.Thread(target=thread_target, daemon=True).start()
 
     def _retry_modeling(self, where_clause, params):
         # Simply re-trigger update if needed
