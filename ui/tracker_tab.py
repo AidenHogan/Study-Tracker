@@ -119,6 +119,71 @@ class TrackerTab(ctk.CTkFrame):
         
         self.calendar_grid = ctk.CTkFrame(calendar_frame, fg_color="transparent")
         self.calendar_grid.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        #Builds a permanent 42-slot grid
+        self._init_calendar_grid()
+
+    def _init_calendar_grid(self):
+        self.day_widgets = []
+        
+        # Create Day Headers (Sun - Sat)
+        for i, day_name in enumerate(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]):
+            ctk.CTkLabel(self.calendar_grid, text=day_name, font=ctk.CTkFont(size=12, weight="bold")).grid(row=0, column=i, sticky="nsew")
+            self.calendar_grid.columnconfigure(i, weight=1)
+            
+        # Create a 6-row by 7-column grid of reusable day slots
+        for r in range(1, 7):
+            self.calendar_grid.rowconfigure(r, weight=1)
+            for c in range(7):
+                day_frame = ctk.CTkFrame(self.calendar_grid, fg_color="transparent")
+                day_frame.grid(row=r, column=c, padx=2, pady=2, sticky="nsew")
+                day_frame.rowconfigure(0, weight=1)
+                day_frame.columnconfigure(0, weight=1)
+                
+                lbl_frame = ctk.CTkFrame(day_frame, corner_radius=5, border_width=0)
+                lbl_frame.grid(row=0, column=0, sticky="nsew")
+                
+                day_label = ctk.CTkLabel(lbl_frame, text="")
+                day_label.pack(expand=True)
+                
+                bar_frame = ctk.CTkFrame(day_frame, height=5, fg_color="transparent")
+                bar_frame.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+                
+                # Store references in a dictionary
+                widget_dict = {
+                    'day_frame': day_frame,
+                    'lbl_frame': lbl_frame,
+                    'day_label': day_label,
+                    'bar_frame': bar_frame,
+                    'date_obj': None
+                }
+                self.day_widgets.append(widget_dict)
+                
+                # Bind click events
+                lbl_frame.bind("<Button-1>", lambda e, idx=len(self.day_widgets)-1: self._on_day_clicked(idx))
+                day_label.bind("<Button-1>", lambda e, idx=len(self.day_widgets)-1: self._on_day_clicked(idx))
+
+    def _on_day_clicked(self, widget_index):
+        clicked_dict = self.day_widgets[widget_index]
+        clicked_date = clicked_dict['date_obj']
+        
+        if not clicked_date: 
+            return # Clicked an empty padding slot
+        
+        self.selected_date = clicked_date
+        today_date = date.today()
+        
+        # Reset all borders
+        for d in self.day_widgets:
+            if d['date_obj'] == today_date:
+                d['lbl_frame'].configure(border_width=2, border_color="#3b8ed0")
+            else:
+                d['lbl_frame'].configure(border_width=0)
+                
+        # Highlight the newly clicked frame
+        clicked_dict['lbl_frame'].configure(border_width=2, border_color="#db8e3b")
+        
+        self.update_session_list()
 
     def update_displays(self):
         self.update_tag_combobox()
@@ -221,71 +286,68 @@ class TrackerTab(ctk.CTkFrame):
         self.best_streak_label.configure(text=f"Best Streak\n{best_streak} days")
 
     def update_calendar_display(self):
-        for widget in self.calendar_grid.winfo_children(): widget.destroy()
         year, month = self.current_calendar_date.year, self.current_calendar_date.month
         self.month_year_label.configure(text=f"{self.current_calendar_date.strftime('%B %Y')}")
 
+        # Fetch data
         query = "SELECT strftime('%d', s.start_time), s.duration_seconds, t.color FROM sessions s JOIN tags t ON s.tag = t.name WHERE strftime('%Y-%m', s.start_time) = ?"
         sessions_data = db.fetch_all(query, (f"{year}-{month:02d}",))
+        
         sessions_by_day = {}
         for day, duration, color in sessions_data:
             day_int = int(day)
             if day_int not in sessions_by_day: sessions_by_day[day_int] = []
             sessions_by_day[day_int].append({'duration': duration, 'color': color})
 
-        for i, day_name in enumerate(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]):
-            ctk.CTkLabel(self.calendar_grid, text=day_name, font=ctk.CTkFont(size=12, weight="bold")).grid(row=0,
-                                                                                                           column=i,
-                                                                                                           sticky="nsew")
-            self.calendar_grid.columnconfigure(i, weight=1)
-        # Ensure weeks start on Sunday (0=Monday, 6=Sunday) to align with our header labels
+        # Calculate layout
         cal = calendar.Calendar(firstweekday=6)
-        for r, week in enumerate(cal.monthdayscalendar(year, month), start=1):
-            self.calendar_grid.rowconfigure(r, weight=1)
-            for c, day in enumerate(week):
-                if day == 0:
-                    continue
-                day_frame = ctk.CTkFrame(self.calendar_grid, fg_color="transparent")
-                day_frame.grid(row=r, column=c, padx=2, pady=2, sticky="nsew")
-                day_frame.rowconfigure(0, weight=1)
-                day_frame.columnconfigure(0, weight=1)
+        weeks = cal.monthdayscalendar(year, month)
+        flat_days = [day for week in weeks for day in week]
+        today_date = date.today()
 
+        # Update existing widgets
+        for i, widget_dict in enumerate(self.day_widgets):
+            # Clear old duration bars
+            for child in widget_dict['bar_frame'].winfo_children():
+                child.destroy()
+
+            if i < len(flat_days) and flat_days[i] != 0:
+                day = flat_days[i]
                 current_day_date = date(year, month, day)
-                is_today = (date.today() == current_day_date)
+                
+                # Make widget visible and set text
+                widget_dict['day_frame'].grid()
+                widget_dict['day_label'].configure(text=str(day))
+                widget_dict['date_obj'] = current_day_date
+                
+                # Apply styles
+                is_today = (today_date == current_day_date)
                 is_selected = (self.selected_date == current_day_date)
-                lbl_frame = ctk.CTkFrame(
-                    day_frame,
-                    corner_radius=5,
-                    border_width=2 if (is_today or is_selected) else 0,
-                    border_color="#3b8ed0" if is_today else ("#db8e3b" if is_selected else "#3b8ed0"),
-                )
-                lbl_frame.grid(row=0, column=0, sticky="nsew")
-                day_label = ctk.CTkLabel(lbl_frame, text=str(day))
-                day_label.pack(expand=True)
-                # Clicking a day selects it and refreshes session list
-                def _on_select_day(d=current_day_date):
-                    self.selected_date = d
-                    self.update_session_list()
-                    self.update_calendar_display()
-                lbl_frame.bind("<Button-1>", lambda e, d=current_day_date: _on_select_day(d))
-                day_label.bind("<Button-1>", lambda e, d=current_day_date: _on_select_day(d))
-
+                
+                border_w = 2 if (is_today or is_selected) else 0
+                border_c = "#db8e3b" if is_selected else ("#3b8ed0" if is_today else "#3b8ed0")
+                bg_color = "#345e37" if day in sessions_by_day else "transparent"
+                
+                widget_dict['lbl_frame'].configure(border_width=border_w, border_color=border_c, fg_color=bg_color)
+                
+                # Rebuild duration bars
                 if day in sessions_by_day:
-                    lbl_frame.configure(fg_color="#345e37")  # Green for days with sessions
-                    bar_frame = ctk.CTkFrame(day_frame, height=5, fg_color="transparent")
-                    bar_frame.grid(row=1, column=0, sticky="ew", pady=(2, 0))
                     total_dur = sum(s['duration'] for s in sessions_by_day[day])
                     if total_dur > 0:
                         relx = 0
                         for s in sessions_by_day[day]:
                             relw = s['duration'] / total_dur
                             ctk.CTkFrame(
-                                bar_frame,
+                                widget_dict['bar_frame'],
                                 fg_color=s['color'],
                                 height=5,
                                 corner_radius=0,
                             ).place(relx=relx, rely=0, relwidth=relw, relheight=1)
                             relx += relw
+            else:
+                # Padding day, hide the slot
+                widget_dict['day_frame'].grid_remove()
+                widget_dict['date_obj'] = None
 
     def delete_session(self, session_id):
         if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this session?"):
