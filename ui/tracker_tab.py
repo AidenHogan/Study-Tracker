@@ -36,23 +36,25 @@ class TrackerTab(ctk.CTkFrame):
         title_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
         title_frame.pack(pady=(20, 10), fill="x", padx=20)
         ctk.CTkLabel(title_frame, text="Timer", font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
-        ctk.CTkButton(title_frame, text="?", width=30, command=self._show_help_modal).pack(side="right")
+        ctk.CTkButton(title_frame, text="?", width=30, command=self._show_overview_help_modal).pack(side="right")
         
         self.time_display = ctk.CTkLabel(left_frame, text="00:00:00", font=ctk.CTkFont(size=48, family="monospace"))
         self.time_display.pack(pady=10, padx=20)
 
+        # Tag Frame
         tag_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
         tag_frame.pack(fill="x", padx=20, pady=10)
         tag_frame.columnconfigure(0, weight=1)
         self.tag_combobox = ctk.CTkComboBox(tag_frame, values=[])
         self.tag_combobox.grid(row=0, column=0, sticky="ew")
-        ctk.CTkButton(tag_frame, text="Manage", width=70, command=self.app.open_tag_manager).grid(row=0, column=1,
-                                                                                                  padx=(5, 0))
+        ctk.CTkButton(tag_frame, text="Manage", width=70, command=self.app.open_tag_manager).grid(row=0, column=1, padx=(5, 0))
 
+        # Timer Start
         self.toggle_button = ctk.CTkButton(left_frame, text="Start", command=self.toggle_timer, height=40)
         self.toggle_button.pack(pady=10, padx=20, fill="x")
-        ctk.CTkButton(left_frame, text="Manual Session Entry", command=self.app.add_session_popup).pack(pady=5, padx=20,
-                                                                                                        fill="x")
+        
+        # Manual Entry
+        ctk.CTkButton(left_frame, text="Manual Session Entry", command=self.app.add_session_popup).pack(pady=5, padx=20, fill="x")
 
         # --- Updated Struggle Frame (Custom Time) ---
         self.struggle_frame = ctk.CTkFrame(left_frame)
@@ -424,7 +426,8 @@ class TrackerTab(ctk.CTkFrame):
         self.current_calendar_date = (self.current_calendar_date.replace(day=1) + timedelta(days=last_day))
         self.update_calendar_display()
 
-    def _show_help_modal(self):
+    # Help modals
+    def _show_overview_help_modal(self):
         help_text = (
             "TRACKER TAB - Study Time Tracking\n\n"
             "TIMER:\n"
@@ -433,7 +436,7 @@ class TrackerTab(ctk.CTkFrame):
             "• Timer runs until you click 'Stop'\n"
             "• Sessions are automatically saved to your log\n\n"
             "STRUGGLE TIMER:\n"
-            "• Use this for focused 20-minute deep work sessions\n"
+            "• Use this for focused n-minute deep work sessions\n"
             "• Helps track productive struggle time\n"
             "• Separate from main timer - use for specific challenges\n\n"
             "MANUAL ENTRY:\n"
@@ -451,3 +454,16 @@ class TrackerTab(ctk.CTkFrame):
             "• Click days to see session details"
         )
         messagebox.showinfo("Tracker Tab Help", help_text)
+    
+    def _show_manual_entry_help_modal(self):
+        help_text = (
+            "MANUAL ENTRY - Create Activities\n\n"
+            "TIME:\n"
+            "• Time is in the 24 format, so 0:01 is 12am, 12:00 is 12pm, 13:00 is 1pm, and so on until 23:59 is 11:59 pm\n"
+            "• 0:00 and 24:00 are invalid start/end points\n\n"
+            "USING TAGS:\n"
+            "• Simply click the drop down menu and select a tag.  To create a tag, close this menu and hit the 'Manage' button"
+
+
+        )
+        messagebox.showinfo("Create Activities Manually", help_text)

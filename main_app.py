@@ -57,7 +57,7 @@ class StudyTrackerApp(ctk.CTk):
         self.geometry(f"{app_width}x{app_height}+{x_position}+{y_position}")
 
         # Set a minimum size so the charts and UI never get squished
-        self.minsize(900, 700)
+        self.minsize(720, 480)
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")

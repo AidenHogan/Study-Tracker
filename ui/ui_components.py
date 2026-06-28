@@ -101,6 +101,8 @@ class SessionEditWindow(ctk.CTkToplevel):
 
         ctk.CTkButton(self, text="Save", command=self.save_session).grid(row=5, column=1, padx=20, pady=(20, 5),
                                                                          sticky="ew")
+        
+        ctk.CTkButton(self, text="?", width=30, command=self._show_help).grid(row=6, column=0, padx=20, sticky="w")
 
         if self.session_id:
             self.load_session_data()
@@ -146,6 +148,19 @@ class SessionEditWindow(ctk.CTkToplevel):
             self.destroy()
         except ValueError:
             messagebox.showerror("Error", "Invalid date or time format. Use YYYY-MM-DD and HH:MM.", parent=self)
+   
+    def _show_help(self):
+        help_text = (
+            "MANUAL ENTRY - Create Activities\n\n"
+            "TIME:\n"
+            "• Time is in the 24 format, so 0:01 is 12am, 12:00 is 12pm, 13:00 is 1pm, and so on until 23:59 is 11:59 pm\n"
+            "• 0:00 and 24:00 are invalid start/end points\n\n"
+            "USING TAGS:\n"
+            "• Simply click the drop down menu and select a tag.  To create a tag, close this menu and hit the 'Manage' button"
+
+
+        )
+        messagebox.showinfo("Create Activities Manually", help_text)
 
 
 class TagManagementWindow(ctk.CTkToplevel):
@@ -154,6 +169,13 @@ class TagManagementWindow(ctk.CTkToplevel):
         self.master_app = master
         self.title("Manage Tags & Categories")
         self.geometry("700x500")  # Increased size
+
+        #Create a header frame at the very top
+        header_frame = ctk.CTkFrame(self, fg_color="transparent")
+        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(10, 0))
+        #Pack the help button inside the header
+        ctk.CTkButton(header_frame, text="?", width=30, command=self._show_help_modal).pack(side="right")
+
         self.transient(master)
         self.wait_visibility() # Wait for Linux to actually draw the window
         self.after(200, self.grab_set)
@@ -162,7 +184,7 @@ class TagManagementWindow(ctk.CTkToplevel):
 
         # --- Categories Panel (Left) ---
         category_panel = ctk.CTkFrame(self)
-        category_panel.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        category_panel.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
         category_panel.grid_rowconfigure(0, weight=1)
         category_panel.grid_columnconfigure(0, weight=1)
 
@@ -178,7 +200,7 @@ class TagManagementWindow(ctk.CTkToplevel):
 
         # --- Tags Panel (Right) ---
         tags_panel = ctk.CTkFrame(self)
-        tags_panel.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
+        tags_panel.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
         tags_panel.grid_rowconfigure(0, weight=1)
         tags_panel.grid_columnconfigure(0, weight=1)
 
@@ -192,8 +214,12 @@ class TagManagementWindow(ctk.CTkToplevel):
         self.new_tag_entry.grid(row=0, column=0, padx=(0, 5), sticky="ew")
         ctk.CTkButton(tag_entry_frame, text="Add", width=50, command=self.add_tag).grid(row=0, column=1)
 
-        self.refresh_all()
+        # Tell the main window how to distribute vertical space
+        self.grid_rowconfigure(0, weight=0)  # The header row stays exactly as tall as the button
+        self.grid_rowconfigure(1, weight=1)  # The panels row expands to fill the rest of the window
 
+        self.refresh_all()
+    
     def refresh_all(self):
         self.load_categories()
         self.load_tags()    
@@ -211,7 +237,7 @@ class TagManagementWindow(ctk.CTkToplevel):
 
     def load_tags(self):
         for widget in self.tag_list_frame.winfo_children(): widget.destroy()
-        category_options = ["None"] + self.categories
+        category_options = ["No Category"] + self.categories
 
         for tag, color, category in db.get_tags_with_colors_and_categories():
             frame = ctk.CTkFrame(self.tag_list_frame)
@@ -226,7 +252,7 @@ class TagManagementWindow(ctk.CTkToplevel):
 
             cat_combo = ctk.CTkComboBox(frame, values=category_options, width=120,
                                         command=lambda cat, t=tag: self.assign_category(t, cat))
-            cat_combo.set(category if category else "None")
+            cat_combo.set(category if category else "No Category")
             cat_combo.grid(row=0, column=2, padx=5, pady=5)
 
             ctk.CTkButton(frame, text="Del", width=40, fg_color="#db524b", hover_color="#b0423d",
@@ -238,7 +264,7 @@ class TagManagementWindow(ctk.CTkToplevel):
         success, message = db.add_category(cat_name)
         if success:
             self.new_cat_entry.delete(0, 'end')
-            self.load_categories()
+            self.refresh_all()
         else:
             messagebox.showwarning("Duplicate", message, parent=self)
 
@@ -329,6 +355,22 @@ class TagManagementWindow(ctk.CTkToplevel):
         if new_color and new_color[1]:
             db.update_tag_color(tag_name, new_color[1])
             self.load_tags()
+
+    def _show_help_modal(self):
+        help_text = (
+            "TAG/CATEGORY MANAGER - Sort Work\n\n"
+            "TAGS:\n"
+            "• Specific subjects, work, or tasks: math, cleaning, etc\n"
+            "• Create a new tag by entering one in the textbox and hitting 'Add'\n"
+            "• Select a specific color for it by clicking on the colored square to the left of its name\n"
+            "• Select a broad category for it by hitting the drop-down arrow to the left of the 'Del' button\n\n"
+            "CATEGORIES:\n"
+            "• Broad groups to sort tags into. Eg: math, biology, history, could all be sorted into 'school work'\n"
+            "• Create by writing it in the text box under categories and hitting add\n"
+            "• Assign tags your categories in the 'Tags' section by clicking the drop down menu"
+
+        )
+        messagebox.showinfo("Manage Tags/Categories Help", help_text)
 
 
 class ManualHealthEntryWindow(ctk.CTkToplevel):
