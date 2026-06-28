@@ -132,15 +132,18 @@ class AnalyticsTab(ctk.CTkFrame):
         self.analysis_controls_frame.grid(row=0, column=3, padx=(20, 0))
         ctk.CTkLabel(self.analysis_controls_frame, text="Model:").pack(side="left", padx=(0, 5))
         # Dropdowns for analysis organization
-        model_menu = ctk.CTkOptionMenu(self.analysis_controls_frame, values=["Lasso", "PCA", "Standard", "Weekly", "PLS", "IRF", "HMM"],
-                                       variable=self.model_type, command=lambda v: self.update_charts())
+        model_menu = ctk.CTkComboBox(self.analysis_controls_frame, values=["Lasso", "PCA", "Standard", "Weekly", "PLS", "IRF", "HMM"],
+                                       variable=self.model_type, state="readonly", command=lambda v: self.update_charts())
         model_menu.pack(side="left")
+
         ctk.CTkLabel(self.analysis_controls_frame, text="Data:").pack(side="left", padx=(15, 5))
         ctk.CTkSegmentedButton(self.analysis_controls_frame, values=["Strict", "Imputed"],
                                variable=self.analysis_method, command=lambda v: self.update_charts()).pack(side="left")
+        
         ctk.CTkLabel(self.analysis_controls_frame, text="Exploratory:").pack(side="left", padx=(15, 5))
-        analysis_menu = ctk.CTkOptionMenu(self.analysis_controls_frame, values=["Overview", "CCF", "Event Study", "Quantile"],
-                                          variable=self.analysis_type, command=lambda v: self.update_charts())
+
+        analysis_menu = ctk.CTkComboBox(self.analysis_controls_frame, values=["Overview", "CCF", "Event Study", "Quantile"],
+                                          variable=self.analysis_type, state="readonly", command=lambda v: self.update_charts())
         analysis_menu.pack(side="left")
         # Help button and note
         ctk.CTkButton(self.analysis_controls_frame, text="?", width=26, command=self._show_help_modal).pack(side="left", padx=(10, 0))
@@ -170,20 +173,28 @@ class AnalyticsTab(ctk.CTkFrame):
             pass
 
     def _build_exploratory_controls(self):
+        atype = self.analysis_type.get()
+
+        if getattr(self, "_last_built_atype", None) == atype:
+            return
+        self._last_built_atype = atype
+
         for w in self.exploratory_controls.winfo_children():
             w.destroy()
-        atype = self.analysis_type.get()
+
         if atype == "Event Study":
             # Feature selector
             ctk.CTkLabel(self.exploratory_controls, text="Feature:").pack(side="left", padx=(0,5))
-            ctk.CTkOptionMenu(self.exploratory_controls, values=[
+
+            ctk.CTkComboBox(self.exploratory_controls, values=[
                 "sleep_score","avg_stress","sleep_duration_hours","body_battery",
                 "resting_hr","respiration","intensity_minutes","hydration_ml"
-            ], variable=self.event_feature, command=lambda v: self.update_charts()).pack(side="left")
+            ], variable=self.event_feature, state="readonly", command=lambda v: self.update_charts()).pack(side="left")
             # Shock type
             ctk.CTkLabel(self.exploratory_controls, text="Shock:").pack(side="left", padx=(10,5))
-            ctk.CTkOptionMenu(self.exploratory_controls, values=["drop","spike"],
-                              variable=self.event_kind, command=lambda v: self.update_charts()).pack(side="left")
+            ctk.CTkComboBox(self.exploratory_controls, values=["drop","spike"],
+                              variable=self.event_kind, state="readonly", command=lambda v: self.update_charts()).pack(side="left")
+            
             # Threshold
             ctk.CTkLabel(self.exploratory_controls, text="Threshold:").pack(side="left", padx=(10,5))
             thr_entry = ctk.CTkEntry(self.exploratory_controls, textvariable=self.event_threshold, width=60)
