@@ -45,7 +45,7 @@ def embed_figure_in_frame(fig, frame):
     if not fig:
         return
 
-    # 1. Define the resize logic (the same logic you had)
+    # Define the resize logic
     def _on_resize(event, fig=fig, frame=frame):
         # We need the canvas associated with THIS frame
         canvas = getattr(frame, '_canvas_widget', None)
@@ -74,7 +74,7 @@ def embed_figure_in_frame(fig, frame):
         except Exception:
             pass
 
-    # 2. Check for existing canvas
+    # Check for existing canvas
     existing_canvas = getattr(frame, '_canvas_widget', None)
     
     if existing_canvas and existing_canvas.get_tk_widget().winfo_exists():
@@ -83,7 +83,7 @@ def embed_figure_in_frame(fig, frame):
         existing_canvas.figure = fig
         fig.set_canvas(existing_canvas)
         
-        # Update the resize callback to use the NEW fig
+        # Update the resize callback to use new fig
         if hasattr(frame, '_on_resize_cb'):
             frame.unbind("<Configure>", frame._on_resize_cb)
         
@@ -97,7 +97,7 @@ def embed_figure_in_frame(fig, frame):
         canvas = FigureCanvasTkAgg(fig, master=frame)
         widget = canvas.get_tk_widget()
         
-        # Apply your styles
+        # Apply styles
         widget.configure(bg=BG_COLOR)
         widget.place(x=3, y=3, width=50, height=50) # Initial dummy size
         

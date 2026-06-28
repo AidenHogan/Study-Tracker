@@ -24,8 +24,8 @@ from ui.activitywatch_tab import ActivityWatchTab
 
 
 # Application Constants TODO: set these to be more adjustable
-APP_WIDTH = 1200
-APP_HEIGHT = 850
+#APP_WIDTH = 1200
+#APP_HEIGHT = 850
 
 
 class StudyTrackerApp(ctk.CTk):
@@ -39,14 +39,33 @@ class StudyTrackerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Focus & Wellness Tracker")
-        self.geometry(f"{APP_WIDTH}x{APP_HEIGHT}")
+        
+        # Dynamic Window Sizing & Centering
+        # Get the user's actual screen dimensions
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+
+        # Calculate 80% of their screen (capped at 1400x900 for huge monitors)
+        app_width = min(int(screen_width * 0.8), 1400)
+        app_height = min(int(screen_height * 0.8), 900)
+
+        # Calculate the x and y coordinates to perfectly center the window
+        x_position = int((screen_width / 2) - (app_width / 2))
+        y_position = int((screen_height / 2) - (app_height / 2))
+
+        # Apply the geometry (size + position)
+        self.geometry(f"{app_width}x{app_height}+{x_position}+{y_position}")
+
+        # Set a minimum size so the charts and UI never get squished
+        self.minsize(900, 700)
+
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # --- Initialize UI ---
+        # Initialize UI
         self._setup_menu()
         self._setup_tabs()
         self.update_all_displays()

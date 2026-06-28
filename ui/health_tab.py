@@ -4,9 +4,11 @@ import customtkinter as ctk
 import pandas as pd
 from datetime import datetime, timedelta
 from tkinter import messagebox
+import tkinter as tk
 
 from core import database_manager as db
 from core import plot_manager as pm
+from core.plot_manager import BG_COLOR
 
 
 class HealthTab(ctk.CTkFrame):
@@ -64,32 +66,38 @@ class HealthTab(ctk.CTkFrame):
         self.charts_frame.grid_columnconfigure((0, 1), weight=1)
         self.charts_frame.grid_rowconfigure((0, 1), weight=1)
 
-        self.sleep_score_chart = ctk.CTkFrame(self.charts_frame)
+        self.sleep_score_chart = tk.Frame(self.charts_frame, bg=BG_COLOR)
         self.sleep_score_chart.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-        self.sleep_duration_chart = ctk.CTkFrame(self.charts_frame)
+        
+        self.sleep_duration_chart = tk.Frame(self.charts_frame, bg=BG_COLOR)
         self.sleep_duration_chart.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-        self.body_battery_chart = ctk.CTkFrame(self.charts_frame)
+        
+        self.body_battery_chart = tk.Frame(self.charts_frame, bg=BG_COLOR)
         self.body_battery_chart.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
-        self.trends_chart = ctk.CTkFrame(self.charts_frame)
+        
+        self.trends_chart = tk.Frame(self.charts_frame, bg=BG_COLOR)
         self.trends_chart.grid(row=1, column=1, sticky="nsew", padx=10, pady=10)
 
     def update_charts(self):
+        for frame in [self.sleep_score_chart, self.sleep_duration_chart, self.body_battery_chart, self.trends_chart]:
+            for w in list(frame.winfo_children()): 
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
+
         time_range_str = self.time_range.get()
         days = {'7 Days': 6, '30 Days': 29, '90 Days': 89, 'Year': 364}.get(time_range_str, 29)
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
         end_date = datetime.now().strftime('%Y-%m-%d')
 
-        # For the health tab, we always get all study data.
         where_clause = "WHERE date(s.start_time) BETWEEN ? AND ?"
         params = [start_date, end_date]
 
-        # *** BUG FIX: Removed .reset_index() as it's now handled in the database manager ***
         df = db.get_health_and_study_data(start_date, end_date, where_clause, params)
 
+        # 2. UPDATED: Just return if empty, since we already cleared the frames above
         if df.empty:
-            for frame in [self.sleep_score_chart, self.sleep_duration_chart, self.body_battery_chart,
-                          self.trends_chart]:
-                for w in frame.winfo_children(): w.destroy()
             return
 
         # Safely convert columns to numeric types
@@ -97,7 +105,7 @@ class HealthTab(ctk.CTkFrame):
             df[col] = pd.to_numeric(df[col], errors='coerce')
         df['sleep_duration_hours'] = df['sleep_duration_seconds'] / 3600.0
 
-        # Create and embed plots
+        # Create and embed plots (unchanged)
         fig1 = pm.create_correlation_scatter_plot(df, 'sleep_score', 'total_study_minutes',
                                                   f"Study vs. Sleep Score ({time_range_str})", "Sleep Score",
                                                   "Study Minutes")
@@ -150,4 +158,3 @@ class HealthTab(ctk.CTkFrame):
             "• Use Analytics tab for deeper statistical analysis"
         )
         messagebox.showinfo("Health & Wellness Help", help_text)
-

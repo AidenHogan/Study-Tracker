@@ -15,7 +15,8 @@ class PomodoroEditWindow(ctk.CTkToplevel):
         self.title("Edit Pomodoro Log")
         self.geometry("400x400")
         self.transient(master)
-        self.grab_set()
+        self.wait_visibility() 
+        self.after(200, self.grab_set)
         self.grid_columnconfigure(1, weight=1)
 
         # --- Widgets ---
@@ -73,7 +74,8 @@ class SessionEditWindow(ctk.CTkToplevel):
         self.title("Edit Session" if self.session_id else "Add Manual Session")
         self.geometry("400x450")
         self.transient(master)
-        self.grab_set()
+        self.wait_visibility() # Wait for Linux to actually draw the window
+        self.after(200, self.grab_set)
         self.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(self, text="Tag:").grid(row=0, column=0, padx=20, pady=(20, 5), sticky="w")
@@ -153,7 +155,8 @@ class TagManagementWindow(ctk.CTkToplevel):
         self.title("Manage Tags & Categories")
         self.geometry("700x500")  # Increased size
         self.transient(master)
-        self.grab_set()
+        self.wait_visibility() # Wait for Linux to actually draw the window
+        self.after(200, self.grab_set)
         self.grid_columnconfigure(1, weight=1)  # Two main columns
         self.grid_rowconfigure(0, weight=1)
 
@@ -335,7 +338,8 @@ class ManualHealthEntryWindow(ctk.CTkToplevel):
         self.title("Manual Sleep Entry")
         self.geometry("350x200")
         self.transient(master)
-        self.grab_set()
+        self.wait_visibility() # Wait for Linux to actually draw the window
+        self.after(200, self.grab_set)
         self.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(self, text="Date (YYYY-MM-DD):").grid(row=0, column=0, padx=20, pady=(20, 5), sticky="w")

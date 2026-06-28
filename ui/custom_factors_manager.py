@@ -16,7 +16,8 @@ class CustomFactorsWindow(ctk.CTkToplevel):
         self.title("Manage Custom Factors")
         self.geometry("800x600")
         self.transient(master)
-        self.grab_set()
+        self.wait_visibility() # Wait for Linux to actually draw the window
+        self.after(200, self.grab_set)
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
