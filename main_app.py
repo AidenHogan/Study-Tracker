@@ -164,7 +164,7 @@ class StudyTrackerApp(ctk.CTk):
         dialog.title("Select Sync Time Frame")
         dialog.geometry("450x250")
         dialog.transient(self)
-        dialog.grab_set()
+        dialog.after(200, dialog.grab_set)
         
         selected_option = tk.StringVar(value="smart")
         
@@ -342,12 +342,7 @@ class StudyTrackerApp(ctk.CTk):
                 import garth
                 garth.login(email, password)
                 garth.save("~/.garth")
-                messagebox.showinfo("Success", 
-                                  "Credentials updated and authenticated successfully!\n\n"
-                                  "Note: These are stored for this session only.\n"
-                                  "To persist across restarts, add them to your system environment variables:\n"
-                                  "GARMIN_EMAIL and GARMIN_PASSWORD", 
-                                  parent=dialog)
+                messagebox.showinfo("Success!", parent=dialog)
                 dialog.destroy()
             except Exception as e:
                 messagebox.showerror("Authentication Failed", 
