@@ -5,7 +5,7 @@ from tkinter import messagebox
 from datetime import datetime, timedelta
 import os
 from plyer import notification
-from playsound import playsound
+from playsound3 import playsound
 from core import database_manager as db
 from .ui_components import PomodoroEditWindow  # Import the new window
 
