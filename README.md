@@ -52,10 +52,15 @@ Visualize relationships between study time and metrics like Sleep Score, Sleep D
 ## Technologies Used
 
 **Python**
+
 **CustomTkinter:** For the graphical user interface (GUI).
+
 **Pandas:** For data manipulation and analysis.
+
 **Matplotlib:** For creating charts and plots.
+
 **SQLite:** For the local database.
+
 **PyInstaller:** For packaging the application into an executable.
 
 ### AI Use
@@ -98,5 +103,7 @@ If you wish to run the project from its source code:
     ```
 
 Notes and next steps before an official release:
+
 - Additional persistence: The codebase prepares for storing more Garmin Daily* stats; potentially adding a dedicated `garmin_daily_stats` table (or extra columns).
+
 - Tests & docs: Unit tests and README sections for migrations and importer behavior will be added in a follow-up commit.
