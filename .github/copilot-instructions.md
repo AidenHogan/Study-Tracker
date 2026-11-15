@@ -14,18 +14,18 @@ Developer workflows (what to run & where):
 
 Project-specific conventions and gotchas (concrete, discoverable patterns):
 - CSV importer: accepts either `Date` or `Bedtime` headers from Garmin exports. When adding importer fixes, keep both header mappings.
-- Garmin integration: The app supports an OAuth1 sign-in flow via the app menu (Garmin → Sign in to Garmin (OAuth)). The `core/garmin_downloader` module contains CLI helpers and sync logic — change here to add new Garmin endpoints.
-- New daily health columns (e.g., `hydration_ml`, `intensity_minutes`) are prepared by the importer/db code. If you add automatic Garmin sync for these fields, also update the DB schema/migrations.
+- Garmin integration: two official modes, `garth` is no longer used. (1) Personal API key: key → `POST personal.connectapi.garmin.com/.../personal-api-key/token` with `Authorization: ApiKey <key>` (no Accept header; returns a text/plain 24h token) → date-based endpoints via `garmin_api.personal_get`, mapped by `garmin_downloader.build_personal_daily_metrics`. (2) Developer app: Health API with OAuth 2.0 PKCE browser sign-in. `core/garmin_api.py` holds auth/HTTP (endpoints, token refresh, pull/backfill); `core/garmin_downloader.py` maps summaries to daily rows (`build_daily_metrics`) and runs the sync. Menu: Garmin → Configure Garmin API / Sign in to Garmin / Disconnect Garmin.
+- Health schema: legacy `health_metrics` columns keep their meaning; extra API metrics live in `database_manager.EXTENDED_HEALTH_COLUMNS` (added via ALTER TABLE on startup). To add a metric: add it there, map it in `build_daily_metrics`, and add it to the feature lists in `correlation_engine.py`. API sync uses `upsert_health_metrics` (never overwrites with NULL); raw summaries are kept in `garmin_api_raw`.
 - UI fixes: avoid fragile CustomTkinter-only menu constructs — prefer `tkinter.Menu` where startup stability matters (this was the source of a prior crash).
 
 Integration points and cross-component flows to inspect first:
 - GUI → Controller → DB: `main_app.py` routes user interactions (timers, manual entry, tag management) into the persistence layer; follow these calls when modifying behavior.
 - Importer → DB → Analytics: CSV/garmin import code normalizes rows into the SQLite schema; analytics code reads from the same DB and computes rolling/weekly aggregates.
-- OAuth1 flow: menu action triggers the OAuth helper; after sign-in, the downloader can populate additional daily stats.
+- Garmin flow: Configure (client id/secret) → Sign in (browser, localhost redirect) → Sync (`sync_health_data`) writes directly to the DB and exports `~/garmin_auto_export.csv`.
 
 When editing or adding features, quickly check these files first:
 - `main_app.py` — application entry, menu wiring, and the main window.
-- `core/garmin_downloader` — Garmin auth and download helpers.
+- `core/garmin_api.py` / `core/garmin_downloader.py` — Garmin Health API client and sync/mapping.
 - Any `db`, `models`, or `importer` modules — schema, import mappings, and migration helpers.
 - `requirements.txt` — pinned runtime libs (CustomTkinter, pandas, matplotlib, pyinstaller, etc.).
 

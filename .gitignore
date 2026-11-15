@@ -21,5 +21,5 @@ venv/
 # Ignore IDE settings
 .idea/
 
-#ignore scalene profiles
-scalene-profile.*
+# API key
+API_key.md

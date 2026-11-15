@@ -188,7 +188,8 @@ class AnalyticsTab(ctk.CTkFrame):
 
             ctk.CTkComboBox(self.exploratory_controls, values=[
                 "sleep_score","avg_stress","sleep_duration_hours","body_battery",
-                "resting_hr","respiration","intensity_minutes","hydration_ml"
+                "resting_hr","respiration","intensity_minutes","hydration_ml",
+                "steps","hrv_last_night","body_battery_high","skin_temp_deviation"
             ], variable=self.event_feature, state="readonly", command=lambda v: self.update_charts()).pack(side="left")
             # Shock type
             ctk.CTkLabel(self.exploratory_controls, text="Shock:").pack(side="left", padx=(10,5))

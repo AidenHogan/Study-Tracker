@@ -78,8 +78,10 @@ class StudyTrackerApp(ctk.CTk):
 
         # Create an "Auth" cascade for Garmin sign-in
         auth_menu = tk.Menu(menubar, tearoff=0)
-        auth_menu.add_command(label="Sign in to Garmin (OAuth)", command=self.sign_in_garmin)
-        auth_menu.add_command(label="Update Garmin Credentials", command=self.update_garmin_credentials)
+        auth_menu.add_command(label="Sign in to Garmin", command=self.sign_in_garmin)
+        auth_menu.add_command(label="Configure Garmin API", command=self.update_garmin_credentials)
+        auth_menu.add_separator()
+        auth_menu.add_command(label="Disconnect Garmin", command=self.disconnect_garmin)
         menubar.add_cascade(label="Garmin", menu=auth_menu)
 
         # Attach the menu to the root window. If this fails in some packaged
@@ -202,35 +204,50 @@ class StudyTrackerApp(ctk.CTk):
         try:
             self.health_tab.sync_button.configure(text="Syncing...", state="disabled")
             self.update()
-        
+
+            # Make sure we are configured and authorized before syncing.
+            if not garmin_downloader.garmin_api.is_configured():
+                raise garmin_downloader.GarminConfigError("Garmin API is not configured yet.")
+            if not garmin_downloader.garmin_api.has_token():
+                if not messagebox.askyesno("Garmin Sign-in",
+                                           "You are not signed in to Garmin yet.\n\n"
+                                           "Open the Garmin sign-in page in your browser now?"):
+                    return
+                garmin_downloader.garmin_api.authorize_interactive(on_tick=self.update)
+
             # Determine days parameter based on user selection
             option = result["option"]
-            if option == "smart":
-                filepath = garmin_downloader.download_health_stats()  # Smart sync (no days param)
+            days = None if option == "smart" else int(option)
+            summary = garmin_downloader.sync_health_data(days=days)
+
+            parts = []
+            if summary["days_updated"]:
+                parts.append(f"Updated {summary['days_updated']} day(s) of health data "
+                             f"from {summary['summaries']} Garmin summaries.")
             else:
-                filepath = garmin_downloader.download_health_stats(days=int(option))
-
-            if not filepath or not os.path.exists(filepath):
-                messagebox.showwarning("Download Failed", "Could not retrieve the data file from Garmin.")
-                return
-
-            count, message = data_importer.import_garmin_csv(filepath)
-            if count > 0:
-                messagebox.showinfo("Success", f"Successfully synced and imported {count} health record(s).")
+                parts.append("No new health data was available from Garmin for this period.")
+            if summary["backfill_requested"]:
+                parts.append("Older history was requested from Garmin. It is delivered in the "
+                             "background; sync again in a few minutes to import it.")
+            if summary["skipped"]:
+                parts.append("Not shared / not enabled: " + ", ".join(summary["skipped"]))
+            messagebox.showinfo("Garmin Sync", "\n\n".join(parts))
+            if summary["days_updated"]:
                 self.update_all_displays()
-            else:
-                messagebox.showwarning("No New Data",
-                                       message or "No new health records were found.")
-        except garmin_downloader.GarthException as e:
-            # Check if it's an authentication error
-            error_msg = str(e)
-            if "credentials" in error_msg.lower() or "password" in error_msg.lower() or "auth" in error_msg.lower():
-                # Offer to update credentials
-                if messagebox.askyesno("Authentication Failed", 
-                                      f"{error_msg}\n\nWould you like to update your Garmin credentials?"):
+        except garmin_downloader.GarminConfigError as e:
+            if messagebox.askyesno("Garmin API Not Configured",
+                                   f"{e}\n\nWould you like to enter your Garmin API credentials now?"):
+                self.update_garmin_credentials()
+        except garmin_downloader.GarminAuthError as e:
+            if garmin_downloader.garmin_api.uses_api_key():
+                if messagebox.askyesno("Garmin API Key Rejected",
+                                       f"{e}\n\nWould you like to update your API key now?"):
                     self.update_garmin_credentials()
-            else:
-                messagebox.showerror("Sync Error", f"Garmin sync error:\n\n{e}")
+            elif messagebox.askyesno("Garmin Authorization Needed",
+                                   f"{e}\n\nWould you like to sign in to Garmin again now?"):
+                self.sign_in_garmin()
+        except garmin_downloader.GarminAPIError as e:
+            messagebox.showerror("Sync Error", f"Garmin sync error:\n\n{e}")
         except Exception as e:
             messagebox.showerror("Sync Error",
                                  f"Could not sync data from Garmin Connect.\nPlease ensure you are connected to the internet.\n\nError: {e}")
@@ -284,77 +301,130 @@ class StudyTrackerApp(ctk.CTk):
         self.pomodoro_tab.update_pomo_tag_combobox(tags, current_tag)
 
     def sign_in_garmin(self):
-        """Trigger an interactive Garmin OAuth1 login to obtain full metric access."""
+        """Authorize this app with Garmin via OAuth 2.0 (PKCE) in the user's browser."""
+        api = garmin_downloader.garmin_api
+        if not api.is_configured():
+            if messagebox.askyesno("Garmin API Not Configured",
+                                   "Enter your Garmin API key or developer app credentials first?"):
+                self.update_garmin_credentials()
+            return
+        if api.uses_api_key():
+            # No browser sign-in with a personal key: just check that Garmin accepts it.
+            try:
+                msg = api.verify_credentials()
+                messagebox.showinfo("Garmin API Key", f"{msg} You can sync now.")
+            except garmin_downloader.GarminAPIError as e:
+                messagebox.showerror("Garmin API Key", f"Could not verify the API key:\n\n{e}")
+            return
+        messagebox.showinfo("Garmin Sign-in",
+                            "Your browser will open Garmin Connect.\n\n"
+                            "Sign in there and allow access. This window will continue automatically "
+                            "once you are done (times out after 5 minutes).")
         try:
-            ok = garmin_downloader.ensure_oauth_session()
-            if ok:
-                messagebox.showinfo("Garmin Login", "Successfully signed in to Garmin. Full metrics should now be available on the next sync.")
-            else:
-                messagebox.showwarning("Garmin Login", "Could not sign in to Garmin. Please check credentials and try again.")
+            api.authorize_interactive(on_tick=self.update)
+            perms = []
+            try:
+                perms = api.get_user_permissions()
+            except garmin_downloader.GarminAPIError:
+                pass
+            extra = f"\n\nGranted permissions: {', '.join(perms)}" if perms else ""
+            messagebox.showinfo("Garmin Sign-in", "Successfully connected to Garmin." + extra)
+        except garmin_downloader.GarminAPIError as e:
+            messagebox.showerror("Garmin Sign-in Failed", str(e))
         except Exception as e:
-            messagebox.showerror("Garmin Login Error", f"An error occurred during Garmin sign-in: {e}")
+            messagebox.showerror("Garmin Sign-in Error", f"An error occurred during Garmin sign-in: {e}")
+
+    def disconnect_garmin(self):
+        """Revoke this app's Garmin access and delete the stored tokens."""
+        if garmin_downloader.garmin_api.uses_api_key():
+            question = ("Remove the saved Garmin API key from this computer? (The key itself stays valid "
+                        "until you revoke it on Garmin's site.) Health data already imported stays in the database.")
+        else:
+            question = ("Revoke Study Tracker's access to your Garmin data and delete the saved sign-in? "
+                        "Health data already imported stays in the database.")
+        if not messagebox.askyesno("Disconnect Garmin", question):
+            return
+        garmin_downloader.garmin_api.deregister_user()
+        messagebox.showinfo("Disconnect Garmin", "Garmin has been disconnected.")
 
     def update_garmin_credentials(self):
-        """Open a dialog to update Garmin credentials."""
+        """Dialog to choose how the app authenticates with the Garmin Health API:
+        a personal API key (used directly) or a developer app's Client ID/Secret (browser sign-in)."""
         import tkinter as tk
-        
+        api = garmin_downloader.garmin_api
+        cfg = api.load_config()
+
         dialog = tk.Toplevel(self)
-        dialog.title("Update Garmin Credentials")
-        dialog.geometry("400x250")
+        dialog.title("Configure Garmin API")
+        dialog.geometry("500x500")
         dialog.transient(self)
         dialog.grab_set()
-        
-        tk.Label(dialog, text="Update Your Garmin Connect Credentials", 
-                font=("Arial", 12, "bold")).pack(pady=20)
-        
-        tk.Label(dialog, text="These credentials will be saved as environment variables\nand used for future syncs.", 
-                justify="center").pack(pady=5)
-        
-        # Email
-        tk.Label(dialog, text="Garmin Email:").pack(pady=(10, 0))
-        email_entry = tk.Entry(dialog, width=40)
-        email_entry.pack(pady=5)
-        
-        # Pre-fill with current value if exists
-        current_email = os.getenv("GARMIN_EMAIL", "")
-        if current_email:
-            email_entry.insert(0, current_email)
-        
-        # Password
-        tk.Label(dialog, text="Garmin Password:").pack(pady=(10, 0))
-        password_entry = tk.Entry(dialog, width=40, show="*")
-        password_entry.pack(pady=5)
-        
-        def save_credentials():
-            email = email_entry.get().strip()
-            password = password_entry.get().strip()
-            
-            if not email or not password:
-                messagebox.showwarning("Input Error", "Please enter both email and password.", parent=dialog)
-                return
-            
-            # Set environment variables for this session
-            os.environ["GARMIN_EMAIL"] = email
-            os.environ["GARMIN_PASSWORD"] = password
-            
-            # Try to authenticate with the new credentials
-            try:
-                import garth
-                garth.login(email, password)
-                garth.save("~/.garth")
-                messagebox.showinfo("Success!", parent=dialog)
-                dialog.destroy()
-            except Exception as e:
-                messagebox.showerror("Authentication Failed", 
-                                   f"Could not authenticate with the provided credentials.\n\nError: {e}", 
-                                   parent=dialog)
-        
-        # Buttons
-        button_frame = tk.Frame(dialog)
-        button_frame.pack(pady=20)
-        tk.Button(button_frame, text="Save & Test", command=save_credentials, width=15).pack(side="left", padx=5)
-        tk.Button(button_frame, text="Cancel", command=dialog.destroy, width=15).pack(side="left", padx=5)
 
+        tk.Label(dialog, text="Garmin Health API Credentials", font=("Arial", 12, "bold")).pack(pady=(15, 5))
+
+        mode = tk.StringVar(value=cfg.get("auth_mode", api.AUTH_MODE_OAUTH))
+        tk.Radiobutton(dialog, text="Personal API key (no browser sign-in)", variable=mode,
+                       value=api.AUTH_MODE_API_KEY).pack(anchor="w", padx=20)
+        tk.Radiobutton(dialog, text="Developer app: Client ID / Secret (sign in through browser)", variable=mode,
+                       value=api.AUTH_MODE_OAUTH).pack(anchor="w", padx=20)
+
+        def labeled_entry(parent, label, value, show=None):
+            tk.Label(parent, text=label).pack(pady=(6, 0))
+            entry = tk.Entry(parent, width=52, show=show)
+            entry.pack(pady=2)
+            if value:
+                entry.insert(0, value)
+            return entry
+
+        key_frame = tk.LabelFrame(dialog, text="Personal API key", padx=10, pady=5)
+        key_frame.pack(fill="x", padx=15, pady=(10, 5))
+        key_entry = labeled_entry(key_frame, "API key:", cfg.get("api_key", ""), show="*")
+
+        oauth_frame = tk.LabelFrame(dialog, text="Developer app (OAuth)", padx=10, pady=5)
+        oauth_frame.pack(fill="x", padx=15, pady=5)
+        id_entry = labeled_entry(oauth_frame, "Client ID:", cfg.get("client_id", ""))
+        secret_entry = labeled_entry(oauth_frame, "Client Secret:", cfg.get("client_secret", ""), show="*")
+        redirect_entry = labeled_entry(oauth_frame, "Redirect URI (register it on your app):",
+                                       cfg.get("redirect_uri", api.DEFAULT_REDIRECT_URI))
+
+        tk.Label(dialog, justify="center", wraplength=460, fg="gray",
+                 text="Saved in ~/.studytracker on this computer. Your Garmin password is never "
+                      "stored by Study Tracker.").pack(pady=5)
+
+        def refresh_state(*_):
+            key_on = mode.get() == api.AUTH_MODE_API_KEY
+            key_entry.configure(state="normal" if key_on else "disabled")
+            for e in (id_entry, secret_entry, redirect_entry):
+                e.configure(state="disabled" if key_on else "normal")
+
+        mode.trace_add("write", refresh_state)
+        refresh_state()
+
+        def save_config():
+            if mode.get() == api.AUTH_MODE_API_KEY:
+                api_key = key_entry.get().strip()
+                if not api_key:
+                    messagebox.showwarning("Input Error", "Please enter your API key.", parent=dialog)
+                    return
+                api.save_api_key(api_key)
+                dialog.destroy()
+                self.sign_in_garmin()  # verifies the key
+                return
+            client_id = id_entry.get().strip()
+            client_secret = secret_entry.get().strip()
+            redirect_uri = redirect_entry.get().strip() or api.DEFAULT_REDIRECT_URI
+            if not client_id or not client_secret:
+                messagebox.showwarning("Input Error", "Please enter both Client ID and Client Secret.", parent=dialog)
+                return
+            api.save_config(client_id, client_secret, redirect_uri)
+            dialog.destroy()
+            if messagebox.askyesno("Garmin API", "Saved. Sign in to Garmin now?"):
+                self.sign_in_garmin()
+
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(pady=10)
+        tk.Button(button_frame, text="Save", command=save_config, width=15).pack(side="left", padx=5)
+        tk.Button(button_frame, text="Cancel", command=dialog.destroy, width=15).pack(side="left", padx=5)
 
 if __name__ == "__main__":
     # Ensure the database and its tables are created before the app starts

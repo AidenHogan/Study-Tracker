@@ -102,8 +102,35 @@ If you wish to run the project from its source code:
     python main_app.py
     ```
 
-Notes and next steps before an official release:
+### Garmin sync (official Garmin APIs)
 
-- Additional persistence: The codebase prepares for storing more Garmin Daily* stats; potentially adding a dedicated `garmin_daily_stats` table (or extra columns).
+One-click sync uses Garmin's official APIs. Study Tracker never sees or stores your Garmin password. Open **Garmin → Configure Garmin API** and pick one of two ways to connect:
+
+**Option A: personal API key (recommended for personal use).** Uses the [Garmin Connect Personal API](https://developer.garmin.com/gc-developer-program/personal/).
+
+1. While signed in to Garmin Connect Web, open the Personal API Key page, choose *Create Key*, pick an expiry (30 days to 1 year) and copy the key. It is only shown once.
+2. In **Garmin → Configure Garmin API** choose *Personal API key*, paste it and click Save (or set `GARMIN_API_KEY`). The app checks the key right away.
+
+The app exchanges the key for a 24-hour access token automatically, requesting a new one when needed. Data is fetched by calendar date, so any range (including the 90-day option) is downloaded in one sync. When the key expires, create a new one and paste it in the same dialog.
+
+**Option B: developer app with browser sign-in (OAuth 2.0, Health API).** For Garmin Connect Developer Program partners.
+
+1. Create an app in the Garmin Connect Developer Program with the **Health API** enabled, and register the redirect URI `http://localhost:8765/garmin/callback` (or another `localhost` URL with a port).
+2. In **Garmin → Configure Garmin API** choose *Developer app* and enter the app's Client ID and Client Secret (or set `GARMIN_CLIENT_ID`, `GARMIN_CLIENT_SECRET`, and optionally `GARMIN_REDIRECT_URI`).
+3. Choose **Garmin → Sign in to Garmin**, approve access in the browser, then use **Sync from Garmin** on the Health tab.
+
+Configuration and tokens are stored in `~/.studytracker/` (the API key or Client Secret is stored there in plain text, so keep that folder private). **Garmin → Disconnect Garmin** revokes OAuth access and deletes the tokens; with an API key it removes the saved key from this computer (revoke the key itself on Garmin's site if needed).
+
+How syncing works:
+
+- Personal API key: daily summaries, sleep, HRV, weight and fitness age are requested for the selected date range.
+- Developer app: summaries uploaded in the last 7 days are pulled directly. For older ranges (first sync, or the 30/90-day options) the app asks Garmin for a *backfill*; Garmin processes it in the background, and the next sync imports it.
+- Metrics your device doesn't record (for example SpO2 or HRV on some watches) simply stay empty.
+- Data is merged into existing days: values from CSV imports or manual entries (e.g. hydration) are never wiped by a sync.
+- Raw API summaries are kept in the `garmin_api_raw` table, and a CSV copy is written to `~/garmin_auto_export.csv`, which you can re-import with **Import From File**.
+
+Metrics stored per day: the original columns (sleep score and duration, resting HR, lowest body battery, SpO2, respiration, average stress, intensity minutes, hydration) plus, from the Garmin APIs, steps, distance, active calories, floors, average/min/max HR, max stress, moderate/vigorous intensity minutes, body battery high/charged/drained, deep/light/REM/awake sleep, overnight HRV, VO2 max, fitness age, skin temperature deviation, and weight. These new columns are empty for days imported before the upgrade; existing databases are migrated automatically on startup.
+
+Notes and next steps before an official release:
 
 - Tests & docs: Unit tests and README sections for migrations and importer behavior will be added in a follow-up commit.

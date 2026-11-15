@@ -83,6 +83,22 @@ def _to_float_or_none(value):
         return None
 
 
+def _extended_metrics_from_row(row):
+    """Read optional extended metric columns (as written by the Garmin API sync's CSV export,
+    which uses the DB column names as headers). Absent columns are simply skipped, so classic
+    Garmin Connect exports import exactly as before."""
+    out = {}
+    for col, col_type in db.EXTENDED_HEALTH_COLUMNS.items():
+        if col == 'data_source' or col not in row.index:
+            continue
+        conv = _to_float_or_none if col_type == 'REAL' else _to_int_or_none
+        val = conv(row.get(col))
+        if val is not None and not pd.isna(val):
+            out[col] = val
+    out['data_source'] = 'garmin_csv'
+    return out
+
+
 def import_garmin_csv(filepath):
     """
     Processes a Garmin sleep data CSV file and imports the data into the database.
@@ -123,7 +139,8 @@ def import_garmin_csv(filepath):
             sleep_sec=duration_seconds,
             stress=_to_int_or_none(row.get(COL_AVG_STRESS) or row.get(COL_AVG_STRESS_ALT) or row.get(COL_AVG_STRESS_SIMPLE)),
             hydration_ml=_to_float_or_none(row.get(COL_HYDRATION)),
-            intensity_minutes=_to_int_or_none(row.get(COL_INTENSITY_MINUTES))
+            intensity_minutes=_to_int_or_none(row.get(COL_INTENSITY_MINUTES)),
+            **_extended_metrics_from_row(row)
         )
         imported_count += 1
 

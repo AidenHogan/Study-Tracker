@@ -25,8 +25,8 @@ Custom factors:
 - Any `custom_factors` logged into `custom_factor_log` appear as columns prefixed with `factor_`.
 
 Caveats:
-- Many Garmin-derived metrics (resting_hr, pulse_ox, detailed body battery) require OAuth1 access
-    to Garmin Connect and will be NULL when the lighter API access is used. The engine will still
+- Many Garmin-derived metrics (resting_hr, pulse_ox, HRV, steps, ...) are only populated by the
+    official Garmin Health API sync (core/garmin_api.py) and are NULL for days imported from CSV. The engine will still
     run using available fields.
 - All potential feature columns are coerced to numeric (non-numeric values become NaN) and
     a feature must have at least 10 non-null values to be considered for modeling.
@@ -59,6 +59,10 @@ START_TIME_COL = 'start_time'
 POTENTIAL_FEATURE_COLS = [
     'sleep_score', 'avg_stress', 'body_battery', 'sleep_duration_seconds',
     'resting_hr', 'pulse_ox', 'respiration',
+    'hydration_ml', 'intensity_minutes',
+    # Garmin Health API metrics (NULL for data imported before the official API sync)
+    'steps', 'active_calories', 'hrv_last_night', 'body_battery_high',
+    'deep_sleep_seconds', 'rem_sleep_seconds', 'vo2_max', 'skin_temp_deviation',
     'running_minutes', 'distance', 'activity_count', 'breathwork_sessions',
     'total_activity_minutes', 'total_calories', 'avg_activity_duration_minutes'
 ]
@@ -130,7 +134,15 @@ def prepare_daily_features(start_date, end_date, where_clause, params):
     # --- 2. Get Health Metrics ---
     # Pull all numeric fields that may exist in health_metrics so new columns
     # added later (e.g., resting_hr, pulse_ox) are automatically included.
-    health_query = "SELECT date, sleep_score, resting_hr, body_battery, pulse_ox, respiration, sleep_duration_seconds, avg_stress FROM health_metrics WHERE date BETWEEN ? AND ?"
+    # Only columns that exist in this DB are selected, so older databases keep working.
+    with db.db_connection() as conn:
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(health_metrics)")}
+    wanted_cols = ['sleep_score', 'resting_hr', 'body_battery', 'pulse_ox', 'respiration',
+                   'sleep_duration_seconds', 'avg_stress', 'hydration_ml', 'intensity_minutes',
+                   'steps', 'active_calories', 'hrv_last_night', 'body_battery_high',
+                   'deep_sleep_seconds', 'rem_sleep_seconds', 'vo2_max', 'skin_temp_deviation']
+    health_cols = [c for c in wanted_cols if c in existing_cols]
+    health_query = f"SELECT date, {', '.join(health_cols)} FROM health_metrics WHERE date BETWEEN ? AND ?"
     with db.db_connection() as conn:
         health_data = pd.read_sql_query(health_query, conn, params=[start_date, end_date], index_col='date',
                                         parse_dates=['date'])
@@ -214,7 +226,7 @@ def compute_rolling_features(df, windows=(7, 14, 28), min_periods=3):
 
     for w in windows:
         roll = df.rolling(window=w, min_periods=min_periods)
-        for col in ['sleep_score', 'resting_hr', 'body_battery', 'avg_stress', 'total_study_minutes', 'running_minutes', 'distance', 'total_activity_minutes', 'intensity_minutes', 'hydration_ml']:
+        for col in ['sleep_score', 'resting_hr', 'body_battery', 'avg_stress', 'total_study_minutes', 'running_minutes', 'distance', 'total_activity_minutes', 'intensity_minutes', 'hydration_ml', 'steps', 'hrv_last_night']:
             if col in df.columns:
                 new_columns[f'{col}_roll{w}_mean'] = roll[col].mean()
                 new_columns[f'{col}_roll{w}_std'] = roll[col].std()
@@ -255,7 +267,13 @@ def run_weekly_analysis(start_date, end_date, data_method='Imputed', model_type=
         'total_activity_minutes': 'sum',
         'total_calories': 'sum',
         'hydration_ml': 'mean',
-        'intensity_minutes': 'sum'
+        'intensity_minutes': 'sum',
+        'steps': 'sum',
+        'active_calories': 'sum',
+        'hrv_last_night': 'mean',
+        'body_battery_high': 'mean',
+        'vo2_max': 'mean',
+        'skin_temp_deviation': 'mean'
     }
     agg_dict = {k: v for k, v in candidate_aggs.items() if k in daily.columns}
     # If target isn't present, ensure total_study_minutes is created (fill 0)
@@ -568,7 +586,8 @@ def compute_ccf_heatmap_df(start_date, end_date, where_clause, params, lags=rang
     feature_list = [
         'sleep_score', 'avg_stress', 'sleep_duration_hours', 'body_battery',
         'resting_hr', 'respiration', 'intensity_minutes', 'hydration_ml',
-        'total_activity_minutes', 'distance'
+        'total_activity_minutes', 'distance',
+        'steps', 'hrv_last_night', 'body_battery_high', 'skin_temp_deviation'
     ]
     features = [f for f in feature_list if f in daily.columns]
     if y.isna().all() or not features:

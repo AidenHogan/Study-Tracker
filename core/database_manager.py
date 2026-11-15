@@ -47,6 +47,46 @@ def get_earliest_session_date():
 
 DB_PATH = get_db_path()
 
+# Original health_metrics columns (pre Garmin Health API). Kept exactly as-is for compatibility.
+LEGACY_HEALTH_COLUMNS = (
+    'sleep_score', 'resting_hr', 'body_battery', 'pulse_ox', 'respiration',
+    'sleep_duration_seconds', 'avg_stress', 'hydration_ml', 'intensity_minutes',
+)
+
+# Additional columns populated by the official Garmin Health API sync.
+# Added with ALTER TABLE on startup; all nullable so old rows remain valid.
+EXTENDED_HEALTH_COLUMNS = {
+    # Dailies
+    'steps': 'INTEGER',
+    'distance_meters': 'REAL',
+    'active_calories': 'INTEGER',
+    'floors_climbed': 'INTEGER',
+    'avg_hr': 'INTEGER',
+    'min_hr': 'INTEGER',
+    'max_hr': 'INTEGER',
+    'max_stress': 'INTEGER',
+    'moderate_intensity_minutes': 'INTEGER',
+    'vigorous_intensity_minutes': 'INTEGER',
+    # Body battery (body_battery itself stays "lowest value of the day", as before)
+    'body_battery_high': 'INTEGER',
+    'body_battery_charged': 'INTEGER',
+    'body_battery_drained': 'INTEGER',
+    # Sleep stages
+    'deep_sleep_seconds': 'INTEGER',
+    'light_sleep_seconds': 'INTEGER',
+    'rem_sleep_seconds': 'INTEGER',
+    'awake_seconds': 'INTEGER',
+    # HRV / fitness / temperature
+    'hrv_last_night': 'REAL',
+    'hrv_5min_high': 'REAL',
+    'vo2_max': 'REAL',
+    'fitness_age': 'INTEGER',
+    'skin_temp_deviation': 'REAL',
+    'weight_kg': 'REAL',
+    # Provenance: 'garmin_api', 'garmin_csv', 'manual', ... (NULL for rows from older versions)
+    'data_source': 'TEXT',
+}
+
 
 @contextmanager
 def db_connection():
@@ -275,6 +315,23 @@ def setup_database():
         _add_column_if_not_exists(cursor, 'health_metrics', 'avg_stress', 'INTEGER')
         _add_column_if_not_exists(cursor, 'health_metrics', 'hydration_ml', 'REAL')
         _add_column_if_not_exists(cursor, 'health_metrics', 'intensity_minutes', 'INTEGER')
+        # Extended metrics from the official Garmin Health API (all nullable, additive migration;
+        # rows created by older versions/CSV imports simply have NULL here).
+        for col_name, col_type in EXTENDED_HEALTH_COLUMNS.items():
+            _add_column_if_not_exists(cursor, 'health_metrics', col_name, col_type)
+
+        # Raw Garmin Health API summaries, kept so new metrics can be derived later
+        # without re-downloading. One row per (summary_type, summary_id).
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS garmin_api_raw
+                       (
+                           summary_type TEXT NOT NULL,
+                           summary_id TEXT NOT NULL,
+                           calendar_date TEXT,
+                           payload TEXT NOT NULL,
+                           fetched_at TEXT NOT NULL,
+                           PRIMARY KEY (summary_type, summary_id)
+                       )''')
 
         # ActivityWatch daily aggregation table
         cursor.execute('''
@@ -526,11 +583,62 @@ def get_numerical_analytics(start_date, end_date, where_clause, params):
             "most_productive_day_seconds": most_productive_day_seconds}
 
 
-def add_or_replace_health_metric(date, score, rhr, bb, spo2, resp, sleep_sec, stress, hydration_ml=None, intensity_minutes=None):
-    params = (date, score, rhr, bb, spo2, resp, sleep_sec, stress, hydration_ml, intensity_minutes)
+def add_or_replace_health_metric(date, score, rhr, bb, spo2, resp, sleep_sec, stress, hydration_ml=None,
+                                 intensity_minutes=None, **extended):
+    """Insert or update a day's health metrics.
+
+    The legacy columns keep their original "replace" semantics (CSV re-imports overwrite them).
+    Extended columns (see EXTENDED_HEALTH_COLUMNS) are only written when a non-None value is
+    passed, so a CSV import never wipes metrics previously synced from the Garmin API.
+    """
+    legacy = {
+        'sleep_score': score, 'resting_hr': rhr, 'body_battery': bb, 'pulse_ox': spo2,
+        'respiration': resp, 'sleep_duration_seconds': sleep_sec, 'avg_stress': stress,
+        'hydration_ml': hydration_ml, 'intensity_minutes': intensity_minutes,
+    }
+    unknown = set(extended) - set(EXTENDED_HEALTH_COLUMNS)
+    if unknown:
+        raise ValueError(f"Unknown health metric column(s): {', '.join(sorted(unknown))}")
+    ext = {k: v for k, v in extended.items() if v is not None}
+
+    cols = list(legacy) + list(ext)
+    values = [date] + list(legacy.values()) + list(ext.values())
+    updates = [f"{c} = excluded.{c}" for c in cols]
     execute_query(
-        "INSERT OR REPLACE INTO health_metrics (date, sleep_score, resting_hr, body_battery, pulse_ox, respiration, sleep_duration_seconds, avg_stress, hydration_ml, intensity_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        params)
+        f"INSERT INTO health_metrics (date, {', '.join(cols)}) VALUES ({', '.join('?' * (len(cols) + 1))}) "
+        f"ON CONFLICT(date) DO UPDATE SET {', '.join(updates)}",
+        values)
+
+
+def upsert_health_metrics(date, metrics):
+    """Merge metrics into a day's row without discarding existing data.
+
+    Only non-None values are written; columns not supplied (or None) keep whatever is already
+    stored (e.g. hydration from a CSV import, or a manual sleep entry). Used by the Garmin API sync.
+    Returns True if anything was written.
+    """
+    allowed = set(LEGACY_HEALTH_COLUMNS) | set(EXTENDED_HEALTH_COLUMNS)
+    unknown = set(metrics) - allowed
+    if unknown:
+        raise ValueError(f"Unknown health metric column(s): {', '.join(sorted(unknown))}")
+    clean = {k: v for k, v in metrics.items() if v is not None}
+    if not clean:
+        return False
+    cols = list(clean)
+    updates = [f"{c} = excluded.{c}" for c in cols]
+    execute_query(
+        f"INSERT INTO health_metrics (date, {', '.join(cols)}) VALUES ({', '.join('?' * (len(cols) + 1))}) "
+        f"ON CONFLICT(date) DO UPDATE SET {', '.join(updates)}",
+        [date] + list(clean.values()))
+    return True
+
+
+def save_garmin_raw_summary(summary_type, summary_id, calendar_date, payload_json):
+    """Store/refresh the raw JSON of a Garmin Health API summary."""
+    execute_query(
+        "INSERT OR REPLACE INTO garmin_api_raw (summary_type, summary_id, calendar_date, payload, fetched_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (summary_type, str(summary_id), calendar_date, payload_json, datetime.now().isoformat(timespec='seconds')))
 
 
 def add_or_replace_aw_daily(date, active_seconds, app_summary_json):
