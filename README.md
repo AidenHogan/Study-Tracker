@@ -33,7 +33,7 @@ Additional stats models available for automated analysis:
 
 **Health Correlation:**
 
-Import sleep and wellness data from a Garmin Connect CSV export, or manually track and enter sleep duration.
+Import sleep and wellness data from a Garmin Connect API for one-click sync of sleep and wellness data, or CSV export to manually track and enter sleep duration.
 
 Visualize relationships between study time and metrics like Sleep Score, Sleep Duration, and various Garmin data.
 <img width="1917" height="1023" alt="image" src="https://github.com/user-attachments/assets/69ed9e82-64e8-4065-91ab-0603f3fa335c" />
