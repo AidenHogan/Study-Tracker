@@ -357,3 +357,14 @@ def test_full_sync_writes_db_and_requests_backfill(tmp_db, tmp_garmin_files, mon
 def test_find_missing_data_window_unchanged():
     assert garmin_downloader.find_missing_data_window(None) == 90
     assert garmin_downloader.find_missing_data_window(date.today()) == 7
+
+
+def test_manual_sleep_entry_uses_wake_date_and_is_tagged(tmp_db):
+    db.setup_database()
+    db.add_manual_sleep_entry('2026-11-21', 7 * 3600)            # new day -> tagged manual
+    db.upsert_health_metrics('2026-11-20', {'sleep_score': 80, 'data_source': 'garmin_personal_api'})
+    db.add_manual_sleep_entry('2026-11-20', 6 * 3600)            # existing Garmin day keeps its source
+    assert db.fetch_one("SELECT sleep_duration_seconds, data_source FROM health_metrics WHERE date='2026-11-21'") \
+        == (25200, 'manual')
+    assert db.fetch_one("SELECT sleep_score, sleep_duration_seconds, data_source FROM health_metrics "
+                        "WHERE date='2026-11-20'") == (80, 21600, 'garmin_personal_api')

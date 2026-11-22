@@ -212,13 +212,21 @@ def create_correlation_scatter_plot(df, x_col, y_col, title, xlabel, ylabel):
 
 
 def create_trends_chart(df, time_range):
+    """Study minutes per day alongside the sleep that came *before* that day.
+
+    No date shift is needed: Garmin (Health API, Personal API, CSV exports) dates a night's sleep by
+    the morning you wake up, so the sleep row for date D is the night of D-1 -> D, i.e. the sleep
+    preceding the studying on D.
+    """
     if df.empty: return None
     df_trends = df.sort_values('date')
 
-    # Scale sleep duration for better visibility on the chart
-    df_trends['sleep_duration_hours_scaled'] = df_trends['sleep_duration_hours'].fillna(0) * 10
+    # Scale sleep duration for better visibility on the chart. Missing nights stay as gaps
+    # rather than being drawn as 0 hours.
+    df_trends['sleep_duration_hours_scaled'] = df_trends['sleep_duration_hours'] * 10
 
-    fig, ax = _setup_base_chart(f"Trends: Sleep & Study ({time_range})")
+    fig, ax = _setup_base_chart(f"Study vs. Previous Night's Sleep ({time_range})",
+                                xlabel="Study day (sleep = the night before)")
     ax_twin = ax.twinx()
     try:
         ax.set_box_aspect('auto')
@@ -227,15 +235,16 @@ def create_trends_chart(df, time_range):
         pass
 
     # Plot Study Minutes on the left Y-axis
-    ax.plot(df_trends['date'], df_trends['total_study_minutes'], color=SKY_BLUE, label='Study Minutes')
+    ax.plot(df_trends['date'], df_trends['total_study_minutes'], color=SKY_BLUE, label='Study Minutes (that day)')
     ax.set_ylabel('Study Minutes', color=SKY_BLUE)
     ax.tick_params(axis='y', colors=SKY_BLUE)
 
     # Plot Sleep Score and Sleep Duration on the right Y-axis
-    ax_twin.plot(df_trends['date'], df_trends['sleep_score'], color=SEA_GREEN, label='Sleep Score')
+    ax_twin.plot(df_trends['date'], df_trends['sleep_score'], color=SEA_GREEN,
+                 label='Sleep Score (night before)')
     ax_twin.plot(df_trends['date'], df_trends['sleep_duration_hours_scaled'], color=GOLD, linestyle='--',
-                 label='Sleep Hours x10')
-    ax_twin.set_ylabel('Sleep Score / Hours x10', color=SEA_GREEN)
+                 label='Sleep Hours x10 (night before)')
+    ax_twin.set_ylabel("Previous Night: Sleep Score / Hours x10", color=SEA_GREEN)
     ax_twin.tick_params(axis='y', colors=SEA_GREEN)
 
     ax.tick_params(axis='x', labelrotation=90)

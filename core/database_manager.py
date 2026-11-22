@@ -504,7 +504,8 @@ def get_time_by_category(where_clause, params):
 
 
 def get_health_and_study_data(start_date, end_date, where_clause, params):
-    health_query = "SELECT date, sleep_score, body_battery, sleep_duration_seconds, avg_stress FROM health_metrics WHERE date BETWEEN ? AND ?"
+    health_query = ("SELECT date, sleep_score, body_battery, body_battery_high, sleep_duration_seconds, avg_stress "
+                    "FROM health_metrics WHERE date BETWEEN ? AND ?")
     health_params = [start_date, end_date]
 
     study_query = f"SELECT date(s.start_time) as date, SUM(s.duration_seconds) / 60.0 AS total_study_minutes FROM sessions s JOIN tags t ON s.tag = t.name {where_clause} GROUP BY date(s.start_time)"
@@ -657,12 +658,14 @@ def get_aw_daily(start_date=None, end_date=None):
 
 
 def add_manual_sleep_entry(date_str, duration_seconds):
+    """Record a night's sleep duration. `date_str` is the wake-up date (the morning after the night),
+    matching Garmin's convention, so the sleep lines up with the following study day."""
     existing = fetch_one("SELECT sleep_score FROM health_metrics WHERE date = ?", (date_str,))
     if existing:
         execute_query("UPDATE health_metrics SET sleep_duration_seconds = ? WHERE date = ?",
                       (duration_seconds, date_str))
     else:
-        execute_query("INSERT INTO health_metrics (date, sleep_duration_seconds) VALUES (?, ?)",
+        execute_query("INSERT INTO health_metrics (date, sleep_duration_seconds, data_source) VALUES (?, ?, 'manual')",
                       (date_str, duration_seconds))
 
 

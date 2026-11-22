@@ -101,7 +101,7 @@ class HealthTab(ctk.CTkFrame):
             return
 
         # Safely convert columns to numeric types
-        for col in ['sleep_score', 'total_study_minutes', 'sleep_duration_seconds', 'body_battery', 'avg_stress']:
+        for col in ['sleep_score', 'total_study_minutes', 'sleep_duration_seconds', 'body_battery_high', 'avg_stress']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
         df['sleep_duration_hours'] = df['sleep_duration_seconds'] / 3600.0
 
@@ -116,8 +116,8 @@ class HealthTab(ctk.CTkFrame):
                                                   "Sleep Duration (Hours)", "Study Minutes")
         pm.embed_figure_in_frame(fig2, self.sleep_duration_chart)
 
-        fig3 = pm.create_correlation_scatter_plot(df, 'body_battery', 'total_study_minutes',
-                                                  f"Study vs. Body Battery ({time_range_str})", "Body Battery",
+        fig3 = pm.create_correlation_scatter_plot(df, 'body_battery_high', 'total_study_minutes',
+                                                  f"Study vs. Body Battery High ({time_range_str})", "Body Battery High",
                                                   "Study Minutes")
         pm.embed_figure_in_frame(fig3, self.body_battery_chart)
 
@@ -142,7 +142,8 @@ class HealthTab(ctk.CTkFrame):
             "• Sleep Score vs Study: Does better sleep lead to more study time?\n"
             "• Sleep Duration vs Study: Optimal hours of sleep for productivity\n"
             "• Stress vs Study: How does stress impact your focus?\n"
-            "• Trends Chart: Overall patterns in health and study metrics\n\n"
+            "• Trends Chart: Each day's study minutes next to the sleep from the night before\n"
+            "  (Garmin dates a night by the morning you wake up)\n\n"
             "CUSTOM FACTORS:\n"
             "• Track habits like medication, caffeine, exercise\n"
             "• Mark days when you took/did the factor\n"

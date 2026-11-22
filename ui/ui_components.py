@@ -378,22 +378,27 @@ class ManualHealthEntryWindow(ctk.CTkToplevel):
         super().__init__(master)
         self.master_app = master
         self.title("Manual Sleep Entry")
-        self.geometry("350x200")
+        self.geometry("380x240")
         self.transient(master)
         self.wait_visibility() # Wait for Linux to actually draw the window
         self.after(200, self.grab_set)
         self.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(self, text="Date (YYYY-MM-DD):").grid(row=0, column=0, padx=20, pady=(20, 5), sticky="w")
+        # Sleep is dated by the morning you woke up, the same convention Garmin uses, so a night's
+        # sleep lines up with the study day that follows it.
+        ctk.CTkLabel(self, text="Wake-up Date (YYYY-MM-DD):").grid(row=0, column=0, padx=20, pady=(20, 0), sticky="w")
         self.date_entry = ctk.CTkEntry(self)
-        self.date_entry.grid(row=0, column=1, padx=20, pady=(20, 5), sticky="ew")
-        self.date_entry.insert(0, (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'))
+        self.date_entry.grid(row=0, column=1, padx=20, pady=(20, 0), sticky="ew")
+        self.date_entry.insert(0, datetime.now().strftime('%Y-%m-%d'))
+        ctk.CTkLabel(self, text="The morning you woke up (e.g. Mon→Tue night = Tue)",
+                     text_color="gray", font=ctk.CTkFont(size=11)).grid(
+            row=1, column=0, columnspan=2, padx=20, pady=(0, 5), sticky="w")
 
-        ctk.CTkLabel(self, text="Sleep Duration (HH:MM):").grid(row=1, column=0, padx=20, pady=5, sticky="w")
+        ctk.CTkLabel(self, text="Sleep Duration (HH:MM):").grid(row=2, column=0, padx=20, pady=5, sticky="w")
         self.sleep_duration_entry = ctk.CTkEntry(self, placeholder_text="e.g., 07:30")
-        self.sleep_duration_entry.grid(row=1, column=1, padx=20, pady=5, sticky="ew")
+        self.sleep_duration_entry.grid(row=2, column=1, padx=20, pady=5, sticky="ew")
 
-        ctk.CTkButton(self, text="Save", command=self.save_health_data).grid(row=2, column=1, padx=20, pady=(20, 5),
+        ctk.CTkButton(self, text="Save", command=self.save_health_data).grid(row=3, column=1, padx=20, pady=(20, 5),
                                                                              sticky="ew")
 
     def save_health_data(self):
@@ -410,4 +415,4 @@ class ManualHealthEntryWindow(ctk.CTkToplevel):
             self.master_app.update_health_charts();
             self.destroy()
         except ValueError:
-            messagebox.showerror("Error", "Invalid format.\nDate: YYYY-MM-DD\nDuration: HH:MM", parent=self)
+            messagebox.showerror("Error", "Invalid format.\nWake-up date: YYYY-MM-DD\nDuration: HH:MM", parent=self)
