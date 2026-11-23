@@ -99,6 +99,31 @@ def test_opening_tracker_keeps_the_pomodoro_tag(app, tracker):
     assert app.pomodoro_tab.pomo_tag_combobox.get() == "Zoology"
 
 
+def test_pomodoro_keeps_its_subject_after_a_work_session(app, tracker, monkeypatch):
+    db.add_tag("Zoology")
+    app.update_all_displays()
+    pomo = app.pomodoro_tab
+    monkeypatch.setattr(pomo, "_send_notification", lambda *a: None)
+    tracker.tag_combobox.set("General")
+    pomo.pomo_tag_combobox.set("Zoology")
+    pomo.pomo_state, pomo.pomo_start_time = "Work", datetime.now() - timedelta(minutes=25)
+    try:
+        pomo._finish_pomodoro_session()
+    finally:
+        pomo.reset_pomodoro_timer()
+    assert db.fetch_all("SELECT tag FROM sessions") == [("Zoology",)]
+    assert pomo.pomo_tag_combobox.get() == "Zoology"
+    assert tracker.tag_combobox.get() == "General"
+
+
+def test_pomodoro_falls_back_when_its_tag_is_gone(app, tracker):
+    tags = ["General", "Other"]
+    app.pomodoro_tab.pomo_tag_combobox.set("Deleted")
+    app.pomodoro_tab.update_pomo_tag_combobox(tags, "Other")
+    assert app.pomodoro_tab.pomo_tag_combobox.get() == "Other"
+    app.refresh_tag_lists()
+
+
 def test_manual_sleep_entry_saves_and_closes(app, tracker, monkeypatch):
     monkeypatch.setattr(app.health_tab, "update_charts", lambda: None)
     win = ui_components.ManualHealthEntryWindow(app)

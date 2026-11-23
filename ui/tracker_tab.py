@@ -213,7 +213,7 @@ class TrackerTab(ctk.CTkFrame):
         self.update_views()
 
     def update_views(self):
-        """Refresh everything except the tag dropdowns (which also set the Pomodoro tab's tag)."""
+        """Refresh everything except the tag dropdowns (refreshed separately, also while hidden)."""
         self.update_stats_display()
         self.update_session_list()
         self.update_calendar_display()

@@ -324,7 +324,12 @@ class PomodoroTab(ctk.CTkFrame):
                           command=lambda p_id=pomo_id: self.delete_pomo_entry(p_id)).pack()
 
     def update_pomo_tag_combobox(self, tags, current_tag):
+        """Update the tag choices, keeping this tab's selection; `current_tag` (the Tracker's) is
+        only used when nothing valid is selected, e.g. at startup or after a tag was deleted."""
+        selected = self.pomo_tag_combobox.get()
         self.pomo_tag_combobox.configure(values=tags)
+        if selected in tags:
+            return
         if current_tag in tags:
             self.pomo_tag_combobox.set(current_tag)
         elif tags:
