@@ -12,6 +12,7 @@ class ActivityWatchTab(ctk.CTkFrame):
     def __init__(self, master, app_instance):
         super().__init__(master, fg_color="transparent")
         self.app = app_instance
+        self._shown_rows = None  # rows currently displayed; None until the list is first built
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
         self._create_widgets()
@@ -32,8 +33,7 @@ class ActivityWatchTab(ctk.CTkFrame):
         self.list_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.list_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=20, pady=(0,20))
         self.list_frame.grid_columnconfigure(0, weight=1)
-
-        self.refresh()
+        # The list is built when the tab is first opened (see refresh_if_changed).
 
     def import_csv(self):
         filepath = filedialog.askopenfilename(title="Select ActivityWatch CSV", filetypes=[("CSV files", "*.csv")])
@@ -76,13 +76,24 @@ class ActivityWatchTab(ctk.CTkFrame):
         except Exception as e:
             messagebox.showerror("Import Error", f"Could not import tags file: {e}")
 
-    def refresh(self):
+    def refresh_if_changed(self):
+        """Rebuild the list only if the stored data differs from what is displayed."""
+        rows = db.get_aw_daily()
+        if rows != self._shown_rows:
+            self.refresh(rows)
+
+    def refresh(self, rows=None):
+        if rows is None:
+            rows = db.get_aw_daily()
+        # Not up to date until the rebuild below finishes
+        self._shown_rows = None
+
         # Clear list
         for w in self.list_frame.winfo_children():
             w.destroy()
 
-        rows = db.get_aw_daily()
         if not rows:
+            self._shown_rows = rows
             ctk.CTkLabel(self.list_frame, text="No ActivityWatch data imported.").grid(row=0, column=0, sticky="w", padx=10, pady=10)
             return
 
@@ -112,3 +123,5 @@ class ActivityWatchTab(ctk.CTkFrame):
                 return _show
 
             ctk.CTkButton(frame, text="Apps", width=60, command=make_show(app_json)).grid(row=0, column=2, padx=6)
+
+        self._shown_rows = rows

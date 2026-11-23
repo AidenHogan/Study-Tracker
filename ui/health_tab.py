@@ -80,11 +80,7 @@ class HealthTab(ctk.CTkFrame):
 
     def update_charts(self):
         for frame in [self.sleep_score_chart, self.sleep_duration_chart, self.body_battery_chart, self.trends_chart]:
-            for w in list(frame.winfo_children()): 
-                try:
-                    w.destroy()
-                except Exception:
-                    pass
+            pm.clear_frame(frame)
 
         time_range_str = self.time_range.get()
         days = {'7 Days': 6, '30 Days': 29, '90 Days': 89, 'Year': 364}.get(time_range_str, 29)

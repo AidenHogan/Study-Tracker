@@ -1,6 +1,8 @@
 # file: main_app.py
 
 import os
+import queue
+import threading
 import customtkinter as ctk
 from tkinter import messagebox, filedialog
 
@@ -65,6 +67,10 @@ class StudyTrackerApp(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
+        # Tabs whose data changed while they were hidden; refreshed when next opened
+        self._stale_tabs = set()
+        self._garmin_syncing = False
+
         # Initialize UI
         self._setup_menu()
         self._setup_tabs()
@@ -96,7 +102,7 @@ class StudyTrackerApp(ctk.CTk):
         # Use grid for the main tab view to ensure proper expansion
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
-        self.tab_view = ctk.CTkTabview(self)
+        self.tab_view = ctk.CTkTabview(self, command=self._on_tab_changed)
         self.tab_view.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
         # Create the container frames for each tab within the tab view
@@ -134,6 +140,14 @@ class StudyTrackerApp(ctk.CTk):
         self.aw_tab = ActivityWatchTab(aw_frame, self)
         self.aw_tab.grid(row=0, column=0, sticky="nsew")
 
+    def _on_tab_changed(self):
+        """Called when the user switches tabs."""
+        if self.tab_view.get() == "ActivityWatch":
+            # Let the tab paint first; building the list takes a moment the first time.
+            self.after(10, self.aw_tab.refresh_if_changed)
+        else:
+            self.after(10, self._refresh_visible_tab)
+
     # --- Pop-up Window Management ---
     # These methods remain in the main app as they are global actions.
     def open_tag_manager(self):
@@ -157,6 +171,8 @@ class StudyTrackerApp(ctk.CTk):
 
     def sync_and_import_garmin_data(self):
         """Downloads latest data from Garmin and then imports it."""
+        if self._garmin_syncing:
+            return
         # Show a dialog to select sync time frame
         import tkinter as tk
         from tkinter import simpledialog
@@ -212,14 +228,52 @@ class StudyTrackerApp(ctk.CTk):
                 if not messagebox.askyesno("Garmin Sign-in",
                                            "You are not signed in to Garmin yet.\n\n"
                                            "Open the Garmin sign-in page in your browser now?"):
+                    self._reset_sync_button()
                     return
                 garmin_downloader.garmin_api.authorize_interactive(on_tick=self.update)
 
             # Determine days parameter based on user selection
             option = result["option"]
             days = None if option == "smart" else int(option)
-            summary = garmin_downloader.sync_health_data(days=days)
+        except Exception as e:
+            self._finish_garmin_sync(error=e)
+            return
+        self._run_garmin_sync(days)
 
+    def _run_garmin_sync(self, days):
+        """Download in a background thread so the window stays usable meanwhile."""
+        self._garmin_syncing = True
+        outcome = queue.Queue()
+
+        def worker():
+            try:
+                outcome.put({"summary": garmin_downloader.sync_health_data(days=days)})
+            except Exception as e:
+                outcome.put({"error": e})
+
+        # Poll from the main thread: dialogs and widgets may only be touched there.
+        def poll():
+            try:
+                done = outcome.get_nowait()
+            except queue.Empty:
+                self.after(100, poll)
+                return
+            self._finish_garmin_sync(**done)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(100, poll)
+
+    def _reset_sync_button(self):
+        self._garmin_syncing = False
+        self.health_tab.sync_button.configure(text="Sync from Garmin", state="normal")
+
+    def _finish_garmin_sync(self, summary=None, error=None):
+        """Report a sync's result (on the main thread) and refresh the displays."""
+        self._reset_sync_button()
+        api = garmin_downloader.garmin_api
+        if error is None:
+            if summary["days_updated"]:
+                self.update_all_displays()
             parts = []
             if summary["days_updated"]:
                 parts.append(f"Updated {summary['days_updated']} day(s) of health data "
@@ -232,27 +286,29 @@ class StudyTrackerApp(ctk.CTk):
             if summary["skipped"]:
                 parts.append("Not shared / not enabled: " + ", ".join(summary["skipped"]))
             messagebox.showinfo("Garmin Sync", "\n\n".join(parts))
-            if summary["days_updated"]:
-                self.update_all_displays()
-        except garmin_downloader.GarminConfigError as e:
+        elif isinstance(error, garmin_downloader.GarminConfigError):
             if messagebox.askyesno("Garmin API Not Configured",
-                                   f"{e}\n\nWould you like to enter your Garmin API credentials now?"):
+                                   f"{error}\n\nWould you like to enter your Garmin API credentials now?"):
                 self.update_garmin_credentials()
-        except garmin_downloader.GarminAuthError as e:
-            if garmin_downloader.garmin_api.uses_api_key():
+        elif isinstance(error, garmin_downloader.GarminAuthError):
+            if api.uses_api_key():
                 if messagebox.askyesno("Garmin API Key Rejected",
-                                       f"{e}\n\nWould you like to update your API key now?"):
+                                       f"{error}\n\nWould you like to update your API key now?"):
                     self.update_garmin_credentials()
             elif messagebox.askyesno("Garmin Authorization Needed",
-                                   f"{e}\n\nWould you like to sign in to Garmin again now?"):
+                                     f"{error}\n\nWould you like to sign in to Garmin again now?"):
                 self.sign_in_garmin()
-        except garmin_downloader.GarminAPIError as e:
-            messagebox.showerror("Sync Error", f"Garmin sync error:\n\n{e}")
-        except Exception as e:
+        elif isinstance(error, garmin_downloader.GarminAPIError):
+            messagebox.showerror("Sync Error", f"Garmin sync error:\n\n{error}")
+        else:
             messagebox.showerror("Sync Error",
-                                 f"Could not sync data from Garmin Connect.\nPlease ensure you are connected to the internet.\n\nError: {e}")
-        finally:
-            self.health_tab.sync_button.configure(text="Sync from Garmin", state="normal")
+                                 f"Could not sync data from Garmin Connect.\nPlease ensure you are connected to the internet.\n\nError: {error}")
+
+    def _garmin_busy(self):
+        """True (after telling the user) while a sync is using the Garmin connection."""
+        if self._garmin_syncing:
+            messagebox.showinfo("Garmin Sync", "A Garmin sync is running. Please wait until it finishes.")
+        return self._garmin_syncing
 
     def import_garmin_data(self):
         filepath = filedialog.askopenfilename(title="Select Garmin Sleep CSV", filetypes=[("CSV files", "*.csv")])
@@ -282,16 +338,42 @@ class StudyTrackerApp(ctk.CTk):
 
     # --- Global Update Coordination ---
     def update_all_displays(self):
-        """Delegates update calls to each individual tab object."""
-        self.tracker_tab.update_displays()
-        self.pomodoro_tab.update_pomodoro_log()
-        self.analytics_tab.update_charts()
-        self.health_tab.update_charts()
-        # Refresh ActivityWatch tab data if present
+        """Call after study or health data changed: updates every tab that shows it.
+
+        Only the visible tab is redrawn now; the others are redrawn when opened. The
+        ActivityWatch tab is left out: its data only changes through its own import buttons,
+        and rebuilding its list is slow. It refreshes on import and when opened.
+        """
+        # The dropdowns are cheap and the timers read them even while their tab is hidden.
+        self.tracker_tab.update_tag_combobox()
+        self.refresh_tabs("Tracker", "Pomodoro", "Analytics", "Health & Wellness")
+
+    def update_health_charts(self):
+        """Call after only health data changed."""
+        self.refresh_tabs("Analytics", "Health & Wellness")
+
+    def refresh_tabs(self, *names):
+        """Refresh the named tabs: now if visible, otherwise when they are next opened."""
+        self._stale_tabs.update(names)
+        self._refresh_visible_tab()
+
+    def _refresh_visible_tab(self):
+        name = self.tab_view.get()
+        if name not in self._stale_tabs:
+            return
+        self.update_idletasks()  # a newly opened tab needs its size before charts are drawn
+        self._stale_tabs.discard(name)
+        refresh = {
+            "Tracker": self.tracker_tab.update_views,
+            "Pomodoro": self.pomodoro_tab.update_pomodoro_log,
+            "Analytics": self.analytics_tab.update_charts,
+            "Health & Wellness": self.health_tab.update_charts,
+        }[name]
         try:
-            self.aw_tab.refresh()
+            refresh()
         except Exception:
-            pass
+            self._stale_tabs.add(name)  # try again when the tab is next opened
+            raise
 
     def update_pomodoro_tags(self, tags, current_tag):
         """
@@ -310,6 +392,8 @@ class StudyTrackerApp(ctk.CTk):
 
     def sign_in_garmin(self):
         """Authorize this app with Garmin via OAuth 2.0 (PKCE) in the user's browser."""
+        if self._garmin_busy():
+            return
         api = garmin_downloader.garmin_api
         if not api.is_configured():
             if messagebox.askyesno("Garmin API Not Configured",
@@ -344,6 +428,8 @@ class StudyTrackerApp(ctk.CTk):
 
     def disconnect_garmin(self):
         """Revoke this app's Garmin access and delete the stored tokens."""
+        if self._garmin_busy():
+            return
         if garmin_downloader.garmin_api.uses_api_key():
             question = ("Remove the saved Garmin API key from this computer? (The key itself stays valid "
                         "until you revoke it on Garmin's site.) Health data already imported stays in the database.")
@@ -358,6 +444,8 @@ class StudyTrackerApp(ctk.CTk):
     def update_garmin_credentials(self):
         """Dialog to choose how the app authenticates with the Garmin Health API:
         a personal API key (used directly) or a developer app's Client ID/Secret (browser sign-in)."""
+        if self._garmin_busy():
+            return
         import tkinter as tk
         api = garmin_downloader.garmin_api
         cfg = api.load_config()

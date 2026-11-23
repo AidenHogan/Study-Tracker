@@ -14,6 +14,7 @@ from core import correlation_engine
 from core.plot_manager import BG_COLOR
 import json
 from collections import Counter
+import queue
 import threading
 
 
@@ -46,6 +47,10 @@ class AnalyticsTab(ctk.CTkFrame):
         # Rendering guards to avoid drawing before layout is ready
         self._first_update_done = False
         self._second_pass_scheduled = False
+        # Background work: one computation at a time, plus the latest request made meanwhile
+        self._bg_compute_token = 0
+        self._running_job = None
+        self._pending_job = None
 
     def _create_widgets(self):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -164,7 +169,7 @@ class AnalyticsTab(ctk.CTkFrame):
         if self.category_filter.get() not in categories:
             # The selected category was deleted: fall back to the unfiltered view.
             self.category_filter.set("All Time")
-            self.update_charts()
+            self.app.refresh_tabs("Analytics")
 
     def _safe_set_frame_bg(self, frame, color):
         """Safely set background on a frame whether it's a CTkFrame or a plain tk.Frame.
@@ -275,11 +280,7 @@ class AnalyticsTab(ctk.CTkFrame):
         for frame in [self.chart_frame_tl, self.chart_frame_tr, self.chart_frame_bl, self.chart_frame_br]:
             try:
                 if getattr(frame, 'winfo_exists', lambda: False)() and frame.winfo_exists():
-                    for widget in frame.winfo_children():
-                        try:
-                            widget.destroy()
-                        except Exception:
-                            pass
+                    pm.clear_frame(frame)  # keeps the canvas for the next chart
             except Exception:
                 pass
         # Destroy any auxiliary widgets in charts_frame except the four chart containers
@@ -298,7 +299,15 @@ class AnalyticsTab(ctk.CTkFrame):
             if self.charts_frame.winfo_width() > 150 and self.charts_frame.winfo_height() > 150:
                 self._first_update_done = True
             else:
-                self.after(120, self.update_charts)
+                # The tab is still hidden (CTkTabview gives hidden tabs ~1px). Keep exactly one
+                # retry pending: every caller used to start its own 120 ms polling loop, so
+                # each refresh while the Analytics tab was unseen added another loop forever.
+                if getattr(self, '_first_update_job', None) is None:
+                    def _retry():
+                        self._first_update_job = None
+                        # Stops retrying if the user already switched to another tab.
+                        self.app.refresh_tabs("Analytics")
+                    self._first_update_job = self.after(120, _retry)
                 return
 
         # Ensure main layout
@@ -349,7 +358,7 @@ class AnalyticsTab(ctk.CTkFrame):
             params = [start_date.isoformat(), end_date.isoformat()]
 
         # Unified Thread dispatch
-        self._bg_compute_token = getattr(self, '_bg_compute_token', 0) + 1
+        self._bg_compute_token += 1
         token = self._bg_compute_token
         self._show_loading(True)
 
@@ -414,7 +423,7 @@ class AnalyticsTab(ctk.CTkFrame):
             return result
 
         def finish(result):
-             if getattr(self, '_bg_compute_token', None) != token: return
+             if self._bg_compute_token != token: return
              self._show_loading(False)
              if result.get('conf'): self.confidence_label.configure(text=result['conf'])
              else: self.confidence_label.configure(text="")
@@ -457,12 +466,41 @@ class AnalyticsTab(ctk.CTkFrame):
              except Exception as e:
                  self._show_error(f"Render error: {e}")
         
-        #Makes update_charts() run in a background thread
-        def thread_target():
-            result = bg_worker() 
-            self.after(0, lambda: finish(result))
+        # Runs in a background thread; a request made while one is running replaces any older
+        # waiting request, so quick clicks don't pile up workers that slow each other down.
+        self._pending_job = (bg_worker, finish)
+        self._start_pending_job()
 
-        threading.Thread(target=thread_target, daemon=True).start()
+    def _start_pending_job(self):
+        if self._running_job is not None or self._pending_job is None:
+            return
+        (compute, finish), self._pending_job = self._pending_job, None
+        self._running_job = finish
+        results = queue.Queue()
+
+        def worker():
+            result = {'error': 'The calculation stopped unexpectedly.'}
+            try:
+                result = compute()
+            finally:
+                results.put(result)  # always report back, or later requests would wait forever
+
+        threading.Thread(target=worker, daemon=True).start()
+
+        # Poll from the main thread: Tk calls are only safe there.
+        def poll():
+            try:
+                result = results.get_nowait()
+            except queue.Empty:
+                self.after(20, poll)
+                return
+            self._running_job = None
+            if self._pending_job is not None:
+                self._start_pending_job()   # a newer request makes this result obsolete
+            else:
+                finish(result)
+
+        self.after(20, poll)
 
     def _retry_modeling(self, where_clause, params):
         # Simply re-trigger update if needed
@@ -514,7 +552,7 @@ class AnalyticsTab(ctk.CTkFrame):
         
         if time_range == "Day":
             self._safe_set_frame_bg(self.chart_frame_tr, ("#DBDBDB", "#2B2B2B"))
-            for w in self.chart_frame_tr.winfo_children(): w.destroy()
+            pm.clear_frame(self.chart_frame_tr)
             ctk.CTkLabel(self.chart_frame_tr, text="Session Log", font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=10, pady=(10, 5))
             log_frame = ctk.CTkScrollableFrame(self.chart_frame_tr, fg_color="transparent")
             log_frame.pack(fill="both", expand=True, padx=5)
@@ -685,7 +723,7 @@ class AnalyticsTab(ctk.CTkFrame):
         pm.embed_figure_in_frame(fig_tr, self.chart_frame_tr)
         pm.embed_figure_in_frame(fig_bl, self.chart_frame_bl)
         
-        for w in self.chart_frame_br.winfo_children(): w.destroy()
+        pm.clear_frame(self.chart_frame_br)
         scroll = ctk.CTkScrollableFrame(self.chart_frame_br, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=6, pady=6)
         

@@ -12,7 +12,9 @@ except ImportError:
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 import os
+import re
 import warnings
+from types import SimpleNamespace
 from matplotlib import rcParams
 
 # --- Constants for Chart Styling ---
@@ -40,74 +42,263 @@ def _setup_base_chart(title, xlabel=None, ylabel=None):
     return fig, ax
 
 
-def embed_figure_in_frame(fig, frame):
-    """Embeds or updates a Matplotlib figure in a frame with persistent canvas recycling."""
-    if not fig:
+_CANVAS_MARGIN = 3
+_FIT_DELAY_MS = 50        # first fit of a newly embedded chart
+_RESIZE_DELAY_MS = 120    # wait for a window resize to pause before redrawing
+
+
+def _frame_canvas(frame):
+    """The frame's live canvas, or None (never embedded, or destroyed by the caller)."""
+    canvas = getattr(frame, '_canvas_widget', None)
+    try:
+        if canvas is not None and canvas.get_tk_widget().winfo_exists():
+            return canvas
+    except Exception:
+        pass
+    return None
+
+
+def _canvas_size_for(frame):
+    """Pixel size the canvas should have, or None while the frame has not been laid out."""
+    w, h = frame.winfo_width(), frame.winfo_height()
+    if w <= 1 or h <= 1:
+        return None
+    m = 2 * _CANVAS_MARGIN
+    return max(w - m, 50), max(h - m, 50)
+
+
+def _fit_canvas_to_frame(frame):
+    """Size the frame's current canvas to the frame.
+
+    Reads the canvas from the frame each time instead of closing over a figure, so a single
+    binding per frame serves every figure that is later embedded in it. Only the widget is
+    resized here: its own <Configure> handler resizes the figure and redraws it, once.
+    """
+    canvas = _frame_canvas(frame)
+    if canvas is None or getattr(frame, '_canvas_hidden', False):
         return
+    size = _canvas_size_for(frame)
+    if size is None:
+        return
+    w, h = size
+    widget = canvas.get_tk_widget()
+    info = widget.place_info()
+    if (str(info.get('width')), str(info.get('height'))) != (str(w), str(h)):
+        widget.place_configure(width=w, height=h)
+    elif (widget.winfo_width(), widget.winfo_height()) == (w, h):
+        canvas.match_figure_to_widget()  # no-op when the figure is already drawn at this size
 
-    # Define the resize logic
-    def _on_resize(event, fig=fig, frame=frame):
-        # We need the canvas associated with THIS frame
-        canvas = getattr(frame, '_canvas_widget', None)
-        widget = canvas.get_tk_widget() if canvas else None
-        if not widget: return
-        
+
+def _schedule_fit(frame, delay):
+    """Fit the canvas `delay` ms after the last request, so a window drag redraws once."""
+    job = getattr(frame, '_fit_job', None)
+    if job:
         try:
-            frame.update_idletasks()
-            widget_w = max(frame.winfo_width() - 6, 50)
-            widget_h = max(frame.winfo_height() - 6, 50)
-            dpi = fig.get_dpi() or 100
-            
-            widget.place_configure(width=widget_w, height=widget_h)
-
-            max_iters = 6
-            target_w, target_h = widget_w, widget_h
-            for _ in range(max_iters):
-                fig.set_size_inches(target_w / dpi, target_h / dpi, forward=True)
-                canvas.draw_idle()
-                
-                fig_w, fig_h = fig.bbox.width, fig.bbox.height
-                if (fig_w - widget_w) <= 1 and (fig_h - widget_h) <= 1:
-                    break
-                target_w = max(target_w - max(int(np.ceil(fig_w - widget_w)) + 2, 0), 50)
-                target_h = max(target_h - max(int(np.ceil(fig_h - widget_h)) + 2, 0), 50)
+            frame.after_cancel(job)
         except Exception:
             pass
 
-    # Check for existing canvas
-    existing_canvas = getattr(frame, '_canvas_widget', None)
-    
-    if existing_canvas and existing_canvas.get_tk_widget().winfo_exists():
-        # --- RECYCLE PATH ---
-        plt.close(existing_canvas.figure)
-        existing_canvas.figure = fig
-        fig.set_canvas(existing_canvas)
-        
-        # Update the resize callback to use new fig
-        if hasattr(frame, '_on_resize_cb'):
-            frame.unbind("<Configure>", frame._on_resize_cb)
-        
-        frame._on_resize_cb = frame.bind("<Configure>", _on_resize)
-        existing_canvas.draw_idle()
+    def _run():
+        frame._fit_job = None
+        try:
+            if frame.winfo_exists():
+                _fit_canvas_to_frame(frame)
+        except Exception:
+            pass
+
+    frame._fit_job = frame.after(delay, _run)
+
+
+def _on_frame_configure(frame):
+    if _frame_canvas(frame) is not None and not getattr(frame, '_canvas_hidden', False):
+        _schedule_fit(frame, _RESIZE_DELAY_MS)
+
+
+def _hide_canvas(frame):
+    canvas = _frame_canvas(frame)
+    if canvas is not None:
+        canvas.get_tk_widget().place_forget()
+        frame._canvas_hidden = True
+
+
+def clear_frame(frame):
+    """Empty a chart frame, keeping its canvas (hidden) so the next chart can reuse it.
+
+    Use this instead of destroying the frame's children: creating a canvas is slow, and
+    destroying one has to clean up after itself (see embed_figure_in_frame).
+    """
+    canvas = _frame_canvas(frame)
+    keep = canvas.get_tk_widget() if canvas is not None else None
+    for child in list(frame.winfo_children()):
+        if child is not keep:
+            child.destroy()
+    _hide_canvas(frame)
+
+
+class _ChartCanvas(FigureCanvasTkAgg):
+    """Canvas that can show one figure after another."""
+
+    def resize(self, event):
+        # Tk also sends <Configure> when nothing but the position changed, or when this size
+        # is already drawn; redrawing is the expensive part, so skip it then.
+        fig_size = tuple(int(round(v)) for v in self.figure.get_size_inches() * self.figure.dpi)
+        photo_size = (self._tkphoto.width(), self._tkphoto.height())
+        if getattr(self, '_drawn_once', False) and (event.width, event.height) == fig_size == photo_size:
+            return
+        super().resize(event)
+
+    def draw(self):
+        self._drawn_once = True
+        super().draw()
+
+    def match_figure_to_widget(self):
+        w, h = self._tkcanvas.winfo_width(), self._tkcanvas.winfo_height()
+        if w > 1 and h > 1:
+            self.resize(SimpleNamespace(width=w, height=h))
+
+    def _update_device_pixel_ratio(self, event=None):
+        # On scaled displays this enlarges the figure. Normally the widget then grows to match,
+        # but here the widget size is fixed by place(), so shrink the figure back instead.
+        old_ratio = self.device_pixel_ratio
+        super()._update_device_pixel_ratio(event)
+        if self.device_pixel_ratio != old_ratio:
+            self.match_figure_to_widget()
+
+    def show_figure(self, fig):
+        """Replace the displayed figure, keeping the canvas' current pixel size."""
+        old_fig = self.figure
+        fig._original_dpi = fig.dpi                             # as FigureCanvasBase.__init__ does
+        fig.set_canvas(self)
+        fig.dpi = fig._original_dpi * self.device_pixel_ratio   # HiDPI scaling
+        # The new figure must match the image buffer, which has the size of the old one.
+        fig.set_size_inches(self._tkphoto.width() / fig.dpi, self._tkphoto.height() / fig.dpi,
+                            forward=False)
+        self.figure = fig
+        self._drawn_once = False
+        if old_fig is not None and old_fig is not fig:
+            old_fig.clear()
+
+
+def embed_figure_in_frame(fig, frame):
+    """Embeds or updates a Matplotlib figure in a frame with persistent canvas recycling.
+
+    Leak notes: every Tk binding registered from Python stays alive (with everything its
+    closure references) until the widget is destroyed, even when the binding is later
+    replaced. Binding a fresh closure per refresh therefore kept every old Figure and
+    FigureCanvasTkAgg alive, and each canvas leaves two handlers on the root window
+    (<Destroy>, <MouseWheel>) that run for every widget destroyed anywhere in the app until
+    the canvas is garbage-collected. So: bind <Configure> once per frame, and drop all
+    references to a canvas whose widget the caller has destroyed.
+    """
+    if not fig:
+        _hide_canvas(frame)  # nothing to plot: don't leave an outdated chart showing
+        return
+
+    existing_canvas = _frame_canvas(frame)
+    size = _canvas_size_for(frame) or (50, 50)  # dummy size until the frame is laid out
+
+    if existing_canvas is not None:
+        # --- RECYCLE PATH: swap the figure into the existing canvas ---
+        widget = existing_canvas.get_tk_widget()
+        for child in list(frame.winfo_children()):
+            if child is not widget:
+                child.destroy()
+        existing_canvas.show_figure(fig)
+        widget.place(x=_CANVAS_MARGIN, y=_CANVAS_MARGIN, width=size[0], height=size[1])
+        if size == (widget.winfo_width(), widget.winfo_height()):
+            existing_canvas.draw_idle()
+        # else: the size change sends <Configure>, which resizes the figure and draws it
     else:
-        # --- FIRST-TIME PATH ---
+        # --- FIRST-TIME PATH (or the previous canvas widget was destroyed by the caller) ---
+        dead_canvas = getattr(frame, '_canvas_widget', None)
+        if dead_canvas is not None:
+            _release_canvas(dead_canvas)
+            frame._canvas_widget = None
         for widget in list(frame.winfo_children()):
             widget.destroy()
 
-        canvas = FigureCanvasTkAgg(fig, master=frame)
+        root = frame.winfo_toplevel()
+        before = {seq: _root_binding_ids(root, seq) for seq in _MPL_ROOT_SEQUENCES}
+        canvas = _ChartCanvas(fig, master=frame)
         widget = canvas.get_tk_widget()
-        
+        # FigureCanvasTkAgg adds <Destroy>/<MouseWheel> handlers to the toplevel that only
+        # remove themselves lazily (after the canvas is garbage-collected *and* such an event
+        # fires). Remove them as soon as this canvas widget is destroyed.
+        added = [(seq, fid) for seq in _MPL_ROOT_SEQUENCES
+                 for fid in _root_binding_ids(root, seq) - before[seq]]
+        if added:
+            def _on_canvas_destroy(event, w=widget, r=root, a=added):
+                if event.widget is w:
+                    try:
+                        r.after_idle(_drop_root_bindings, r, a)
+                    except Exception:
+                        pass
+            widget.bind("<Destroy>", _on_canvas_destroy, add="+")
+
         # Apply styles
         widget.configure(bg=BG_COLOR)
-        widget.place(x=3, y=3, width=50, height=50) # Initial dummy size
-        
-        frame._canvas_widget = canvas
-        frame._on_resize_cb = frame.bind("<Configure>", _on_resize)
-        
-        canvas.draw_idle()
+        widget.place(x=_CANVAS_MARGIN, y=_CANVAS_MARGIN, width=size[0], height=size[1])
 
-    # Initial trigger
-    frame.after(50, lambda: frame.event_generate('<Configure>'))
+        frame._canvas_widget = canvas
+        # The first draw happens when the placed widget gets its size (<Configure>).
+
+    frame._canvas_hidden = False
+
+    if not getattr(frame, '_fit_bound', False):
+        frame.bind("<Configure>", lambda e, f=frame: _on_frame_configure(f), add="+")
+        frame._fit_bound = True
+
+    # Fit again once layout has settled.
+    _schedule_fit(frame, _FIT_DELAY_MS)
+
+
+_MPL_ROOT_SEQUENCES = ("<Destroy>", "<MouseWheel>")
+_BINDING_ID_RE = re.compile(r'^if \{"\[(\S+) ')
+
+
+def _root_binding_ids(root, sequence):
+    """Tcl command names of the Python callbacks bound to `sequence` on `root`."""
+    try:
+        script = root.tk.call("bind", root._w, sequence)
+    except Exception:
+        return set()
+    ids = set()
+    for line in str(script).split("\n"):
+        m = _BINDING_ID_RE.match(line)
+        if m:
+            ids.add(m.group(1))
+    return ids
+
+
+def _drop_root_bindings(root, bindings):
+    """Remove specific callbacks from root bindings, leaving all other handlers in place.
+
+    Done by hand rather than with ``root.unbind(seq, funcid)``, which on older Python
+    versions wipes every handler bound to that sequence.
+    """
+    for seq, funcid in bindings:
+        try:
+            if not root.winfo_exists():
+                return
+            lines = str(root.tk.call("bind", root._w, seq)).split("\n")
+            prefix = f'if {{"[{funcid} '
+            # Also drop blank lines: each add="+" bind leaves one, and they would pile up.
+            keep = "\n".join(line for line in lines
+                             if line.strip() and not line.startswith(prefix))
+            root.tk.call("bind", root._w, seq, keep)
+            root.deletecommand(funcid)
+        except Exception:
+            pass
+
+
+def _release_canvas(canvas):
+    """Break references from a dead canvas so it (and its PhotoImage) can be collected."""
+    try:
+        fig = canvas.figure
+        if fig is not None:
+            fig.clear()
+    except Exception:
+        pass
 
 def create_pie_chart(data, time_range):
     """Creates a pie chart of time by subject."""

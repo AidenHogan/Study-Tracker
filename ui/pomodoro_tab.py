@@ -216,8 +216,8 @@ class PomodoroTab(ctk.CTkFrame):
             sessions_goal = int(self.pomo_sessions_goal.get() or 4)
             break_type = "Long Break" if prev_session_was_work_num % sessions_goal == 0 and prev_session_was_work_num > 0 else "Short Break"
             db.add_pomodoro_session(break_type, self.pomo_start_time, end_time, duration, "Break", "")
+            self.master_app.refresh_tabs("Pomodoro")
 
-        self.update_pomodoro_log()
         self._start_next_pomo_session()
 
     def _start_next_pomo_session(self):

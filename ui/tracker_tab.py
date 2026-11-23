@@ -7,6 +7,8 @@ import calendar
 
 from core import database_manager as db
 
+DEFAULT_TAG_COLOR = "#3b8ed0"  # same as the tags table's default
+
 
 class TrackerTab(ctk.CTkFrame):
     def __init__(self, master, app_instance):
@@ -15,6 +17,7 @@ class TrackerTab(ctk.CTkFrame):
 
         # --- State Variables ---
         self.timer_running = False
+        self.timer_job = None
         self.start_time = None
         self.current_calendar_date = datetime.now()
         self.selected_date = date.today()  # Date whose sessions are displayed/editable
@@ -80,6 +83,9 @@ class TrackerTab(ctk.CTkFrame):
         self.sessions_title_label.pack(pady=(10, 5))
         self.sessions_frame = ctk.CTkScrollableFrame(left_frame, label_text="")
         self.sessions_frame.pack(pady=10, padx=20, fill="both", expand=True)
+        self.no_sessions_label = ctk.CTkLabel(self.sessions_frame, text="No sessions logged today.")
+        self._session_rows = []       # reusable row widgets
+        self._shown_sessions = None   # (date, rows) currently listed
 
         # --- Right Frame (Stats & Calendar) ---
         right_frame = ctk.CTkFrame(self)
@@ -157,7 +163,9 @@ class TrackerTab(ctk.CTkFrame):
                     'lbl_frame': lbl_frame,
                     'day_label': day_label,
                     'bar_frame': bar_frame,
-                    'date_obj': None
+                    'date_obj': None,
+                    'bars': [],        # reusable duration-bar frames
+                    'shown': {}        # what each part currently displays, to skip no-op updates
                 }
                 self.day_widgets.append(widget_dict)
                 
@@ -173,22 +181,39 @@ class TrackerTab(ctk.CTkFrame):
             return # Clicked an empty padding slot
         
         self.selected_date = clicked_date
-        today_date = date.today()
-        
-        # Reset all borders
         for d in self.day_widgets:
-            if d['date_obj'] == today_date:
-                d['lbl_frame'].configure(border_width=2, border_color="#3b8ed0")
-            else:
-                d['lbl_frame'].configure(border_width=0)
-                
-        # Highlight the newly clicked frame
-        clicked_dict['lbl_frame'].configure(border_width=2, border_color="#db8e3b")
-        
+            self._style_day_border(d)
+
         self.update_session_list()
+
+    @staticmethod
+    def _changed(slot, part, value):
+        """Remember what `part` of a calendar slot shows; True if that is different from before."""
+        if slot['shown'].get(part, ()) == value:
+            return False
+        slot['shown'][part] = value
+        return True
+
+    def _style_day_border(self, slot):
+        """Orange border on the selected day, blue on today, none elsewhere."""
+        day = slot['date_obj']
+        if day is None:
+            return
+        if day == self.selected_date:
+            border = (2, "#db8e3b")
+        elif day == date.today():
+            border = (2, "#3b8ed0")
+        else:
+            border = (0, "#3b8ed0")
+        if self._changed(slot, 'border', border):
+            slot['lbl_frame'].configure(border_width=border[0], border_color=border[1])
 
     def update_displays(self):
         self.update_tag_combobox()
+        self.update_views()
+
+    def update_views(self):
+        """Refresh everything except the tag dropdowns (which also set the Pomodoro tab's tag)."""
         self.update_stats_display()
         self.update_session_list()
         self.update_calendar_display()
@@ -206,32 +231,67 @@ class TrackerTab(ctk.CTkFrame):
         self.app.update_pomodoro_tags(tags, current_tag)
 
     def update_session_list(self):
-        for widget in self.sessions_frame.winfo_children(): widget.destroy()
         target_str = self.selected_date.strftime('%Y-%m-%d')
-        self.sessions_title_label.configure(text=f"Sessions for {target_str}")
         query = "SELECT s.id, s.tag, s.duration_seconds, t.color, s.notes FROM sessions s JOIN tags t ON s.tag = t.name WHERE date(s.start_time) = ? ORDER BY s.start_time DESC"
         sessions = db.fetch_all(query, (target_str,))
 
-        if not sessions:
-            ctk.CTkLabel(self.sessions_frame, text="No sessions logged today.").pack()
-        else:
-            for session_id, tag, duration, color, notes in sessions:
-                f = ctk.CTkFrame(self.sessions_frame)
-                f.pack(fill="x", pady=2)
-                f.columnconfigure(1, weight=1)
-                ctk.CTkFrame(f, width=5, fg_color=color).grid(row=0, rowspan=2, column=0, sticky="ns", padx=(5, 0),
-                                                              pady=5)
-                text = f"{tag}: {str(timedelta(seconds=int(duration)))}" + (" 📝" if notes else "")
-                lbl = ctk.CTkLabel(f, text=text, anchor="w", cursor="hand2" if notes else "")
-                lbl.grid(row=0, column=1, sticky="ew", padx=5)
-                if notes: lbl.bind("<Button-1>", lambda e, n=notes, t=tag: messagebox.showinfo(f"Note for: {t}", n))
+        if self._shown_sessions == (target_str, sessions):
+            return
+        self._shown_sessions = (target_str, sessions)
+        self.sessions_title_label.configure(text=f"Sessions for {target_str}")
 
-                btn_frame = ctk.CTkFrame(f, fg_color="transparent")
-                btn_frame.grid(row=0, column=2, padx=5)
-                ctk.CTkButton(btn_frame, text="Edit", width=50,
-                              command=lambda sid=session_id: self.app.edit_session_popup(sid)).pack(side="left")
-                ctk.CTkButton(btn_frame, text="Del", width=40, fg_color="#db524b", hover_color="#b0423d",
-                              command=lambda sid=session_id: self.delete_session(sid)).pack(side="left", padx=(5, 0))
+        # Rows are kept and refilled; only as many as the busiest day shown so far exist.
+        while len(self._session_rows) < len(sessions):
+            self._session_rows.append(self._create_session_row())
+        for i, row in enumerate(self._session_rows):
+            if i < len(sessions):
+                self._fill_session_row(row, sessions[i])
+                if not row['visible']:
+                    row['frame'].pack(fill="x", pady=2)
+                    row['visible'] = True
+            elif row['visible']:
+                row['frame'].pack_forget()
+                row['visible'] = False
+
+        if sessions:
+            self.no_sessions_label.pack_forget()
+        else:
+            self.no_sessions_label.pack()
+
+    def _create_session_row(self):
+        f = ctk.CTkFrame(self.sessions_frame)
+        f.columnconfigure(1, weight=1)
+        row = {'frame': f, 'visible': False, 'data': None}
+
+        row['color'] = ctk.CTkFrame(f, width=5)
+        row['color'].grid(row=0, rowspan=2, column=0, sticky="ns", padx=(5, 0), pady=5)
+
+        def show_note(_event):
+            _, tag, _, _, notes = row['data']
+            if notes:
+                messagebox.showinfo(f"Note for: {tag}", notes)
+
+        row['label'] = ctk.CTkLabel(f, text="", anchor="w")
+        row['label'].grid(row=0, column=1, sticky="ew", padx=5)
+        row['label'].bind("<Button-1>", show_note)
+
+        btn_frame = ctk.CTkFrame(f, fg_color="transparent")
+        btn_frame.grid(row=0, column=2, padx=5)
+        ctk.CTkButton(btn_frame, text="Edit", width=50,
+                      command=lambda: self.app.edit_session_popup(row['data'][0])).pack(side="left")
+        ctk.CTkButton(btn_frame, text="Del", width=40, fg_color="#db524b", hover_color="#b0423d",
+                      command=lambda: self.delete_session(row['data'][0])).pack(side="left", padx=(5, 0))
+        return row
+
+    def _fill_session_row(self, row, data):
+        old, row['data'] = row['data'], data
+        if old == data:
+            return
+        _, tag, duration, color, notes = data
+        if old is None or old[3] != color:
+            row['color'].configure(fg_color=color or DEFAULT_TAG_COLOR)
+        text = f"{tag}: {str(timedelta(seconds=int(duration)))}" + (" 📝" if notes else "")
+        row['label'].configure(text=text, cursor="hand2" if notes else "")
 
     def update_stats_display(self):
         today = datetime.now()
@@ -307,63 +367,61 @@ class TrackerTab(ctk.CTkFrame):
         flat_days = [day for week in weeks for day in week]
         today_date = date.today()
 
-        # Update existing widgets
-        for i, widget_dict in enumerate(self.day_widgets):
-            # Clear old duration bars
-            for child in widget_dict['bar_frame'].winfo_children():
-                child.destroy()
-
-            if i < len(flat_days) and flat_days[i] != 0:
-                day = flat_days[i]
-                current_day_date = date(year, month, day)
-                
-                # Make widget visible and set text
-                widget_dict['day_frame'].grid()
-                widget_dict['day_label'].configure(text=str(day))
-                widget_dict['date_obj'] = current_day_date
-                
-                # Apply styles
-                is_today = (today_date == current_day_date)
-                is_selected = (self.selected_date == current_day_date)
-                
-                border_w = 2 if (is_today or is_selected) else 0
-                border_c = "#db8e3b" if is_selected else ("#3b8ed0" if is_today else "#3b8ed0")
-                bg_color = "#345e37" if day in sessions_by_day else "transparent"
-                
-                widget_dict['lbl_frame'].configure(border_width=border_w, border_color=border_c, fg_color=bg_color)
-                
-                # Rebuild duration bars
-                if day in sessions_by_day:
-                    total_dur = sum(s['duration'] for s in sessions_by_day[day])
-                    if total_dur > 0:
-                        relx = 0
-                        for s in sessions_by_day[day]:
-                            relw = s['duration'] / total_dur
-                            ctk.CTkFrame(
-                                widget_dict['bar_frame'],
-                                fg_color=s['color'],
-                                height=5,
-                                corner_radius=0,
-                            ).place(relx=relx, rely=0, relwidth=relw, relheight=1)
-                            relx += relw
-            else:
+        # Update existing widgets, touching only the parts that look different from before
+        for i, slot in enumerate(self.day_widgets):
+            day = flat_days[i] if i < len(flat_days) else 0
+            if day == 0:
                 # Padding day, hide the slot
-                widget_dict['day_frame'].grid_remove()
-                widget_dict['date_obj'] = None
+                slot['date_obj'] = None
+                if self._changed(slot, 'visible', False):
+                    slot['day_frame'].grid_remove()
+                continue
+
+            slot['date_obj'] = date(year, month, day)
+            if self._changed(slot, 'visible', True):
+                slot['day_frame'].grid()
+            if self._changed(slot, 'text', day):
+                slot['day_label'].configure(text=str(day))
+            self._style_day_border(slot)
+            bg_color = "#345e37" if day in sessions_by_day else "transparent"
+            if self._changed(slot, 'bg', bg_color):
+                slot['lbl_frame'].configure(fg_color=bg_color)
+
+            day_sessions = sessions_by_day.get(day, [])
+            total_dur = sum(s['duration'] for s in day_sessions)
+            bars = [(s['color'] or DEFAULT_TAG_COLOR, s['duration'] / total_dur) for s in day_sessions] if total_dur > 0 else []
+            if self._changed(slot, 'bars', bars):
+                self._update_day_bars(slot, bars)
+
+    def _update_day_bars(self, slot, bars):
+        """Show one colored segment per session, reusing the slot's existing segments."""
+        frames = slot['bars']
+        while len(frames) < len(bars):
+            frames.append(ctk.CTkFrame(slot['bar_frame'], height=5, corner_radius=0))
+        relx = 0
+        for frame, (color, relw) in zip(frames, bars):
+            frame.configure(fg_color=color)
+            frame.place(relx=relx, rely=0, relwidth=relw, relheight=1)
+            relx += relw
+        for frame in frames[len(bars):]:
+            frame.place_forget()
 
     def delete_session(self, session_id):
         if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this session?"):
             db.delete_session(session_id)
-            self.update_displays()
+            self.app.update_all_displays()
 
     def toggle_timer(self):
         if self.timer_running:
             self.timer_running = False
+            if self.timer_job:
+                self.after_cancel(self.timer_job)
+                self.timer_job = None
             self.toggle_button.configure(text="Start", **ctk.ThemeManager.theme["CTkButton"])
             end_time = datetime.now()
             duration = (end_time - self.start_time).total_seconds()
             db.add_session(self.tag_combobox.get(), self.start_time, end_time, duration, notes="")
-            self.update_displays()
+            self.app.update_all_displays()
         else:
             if not self.tag_combobox.get():
                 messagebox.showwarning("No Tag", "Please select or create a tag before starting.");
@@ -377,7 +435,7 @@ class TrackerTab(ctk.CTkFrame):
         if self.timer_running:
             elapsed = (datetime.now() - self.start_time).total_seconds()
             self.time_display.configure(text=str(timedelta(seconds=int(elapsed))))
-            self.after(1000, self.update_timer)
+            self.timer_job = self.after(1000, self.update_timer)
 
     def toggle_struggle_timer(self):
         if self.struggle_timer_job:

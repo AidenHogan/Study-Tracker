@@ -15,27 +15,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from core import database_manager as db
 
 
-@pytest.fixture(scope="module")
-def app(tmp_path_factory):
-    # One app for the whole module: Tk does not reliably start a second root in one process.
-    mp = pytest.MonkeyPatch()
-    mp.setattr(db, "DB_PATH", str(tmp_path_factory.mktemp("db") / "study_sessions.db"))
-    db.setup_database()
-    if not db.get_tags():
-        db.add_tag("General")
-
-    import main_app
-    try:
-        application = main_app.StudyTrackerApp()
-    except Exception as e:  # no display / Tk unavailable
-        mp.undo()
-        pytest.skip(f"Tk app could not start: {e}")
-    application.update()
-    yield application
-    application.destroy()
-    mp.undo()
-
-
 def _open_tag_manager(app):
     from ui.ui_components import TagManagementWindow
     win = TagManagementWindow(app)
