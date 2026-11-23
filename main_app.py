@@ -300,6 +300,14 @@ class StudyTrackerApp(ctk.CTk):
         """
         self.pomodoro_tab.update_pomo_tag_combobox(tags, current_tag)
 
+    def refresh_tag_lists(self):
+        """
+        Lightweight refresh of every dropdown that lists tags or categories, for use after
+        the tag manager changes them. Avoids the full chart refresh of update_all_displays.
+        """
+        self.tracker_tab.update_tag_combobox()  # also syncs the pomodoro tab's combobox
+        self.analytics_tab.refresh_category_combobox()
+
     def sign_in_garmin(self):
         """Authorize this app with Garmin via OAuth 2.0 (PKCE) in the user's browser."""
         api = garmin_downloader.garmin_api

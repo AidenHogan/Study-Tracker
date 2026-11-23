@@ -157,6 +157,15 @@ class AnalyticsTab(ctk.CTkFrame):
         # Hide by default; only show on page 4 (index 3)
         self.exploratory_controls.grid_remove()
 
+    def refresh_category_combobox(self):
+        """Re-read categories so ones added/deleted in the tag manager show up without a restart."""
+        categories = ["All Time"] + [row[0] for row in db.get_categories()]
+        self.category_combo.configure(values=categories)
+        if self.category_filter.get() not in categories:
+            # The selected category was deleted: fall back to the unfiltered view.
+            self.category_filter.set("All Time")
+            self.update_charts()
+
     def _safe_set_frame_bg(self, frame, color):
         """Safely set background on a frame whether it's a CTkFrame or a plain tk.Frame.
         Tries CTkFrame-specific option first, falls back to tk 'bg'."""

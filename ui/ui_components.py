@@ -224,6 +224,14 @@ class TagManagementWindow(ctk.CTkToplevel):
         self.load_categories()
         self.load_tags()    
 
+    def _refresh_app_tag_lists(self):
+        # The tracker/pomodoro tag comboboxes and the analytics category filter cache their
+        # values, so they must be told whenever tags or categories change here.
+        try:
+            self.master_app.refresh_tag_lists()
+        except Exception as e:
+            print(f"Could not refresh tag dropdowns: {e}")
+
     def load_categories(self):
         for widget in self.category_list_frame.winfo_children(): widget.destroy()
         self.categories = [row[0] for row in db.get_categories()]
@@ -265,12 +273,15 @@ class TagManagementWindow(ctk.CTkToplevel):
         if success:
             self.new_cat_entry.delete(0, 'end')
             self.refresh_all()
+            self._refresh_app_tag_lists()
         else:
             messagebox.showwarning("Duplicate", message, parent=self)
 
     def delete_category(self, name):
         db.delete_category(name)
-        self.load_categories()
+        # Tags in this category are now uncategorised, so their rows need redrawing too.
+        self.refresh_all()
+        self._refresh_app_tag_lists()
 
     def assign_category(self, tag_name, category_name):
         db.update_tag_category(tag_name, category_name)
@@ -283,6 +294,7 @@ class TagManagementWindow(ctk.CTkToplevel):
         if success:
             self.new_tag_entry.delete(0, 'end')
             self.load_tags()
+            self._refresh_app_tag_lists()
         else:
             messagebox.showwarning("Duplicate", message, parent=self)
 
@@ -309,21 +321,8 @@ class TagManagementWindow(ctk.CTkToplevel):
         except Exception:
             pass
 
-        try:
-            # Update tracker and pomodoro comboboxes without doing the full analytics/health refresh.
-            tags = [row[0] for row in db.get_tags()]
-            current_tag = tags[0] if tags else ""
-            try:
-                self.master_app.tracker_tab.tag_combobox.configure(values=tags)
-                self.master_app.tracker_tab.tag_combobox.set(current_tag)
-            except Exception:
-                pass
-            try:
-                self.master_app.update_pomodoro_tags(tags, current_tag)
-            except Exception:
-                pass
-        except Exception:
-            pass
+        # Update tracker and pomodoro comboboxes without doing the full analytics/health refresh.
+        self._refresh_app_tag_lists()
 
     def restore_archived_tags(self):
         # Simple picker window listing archived tags to restore
@@ -348,6 +347,7 @@ class TagManagementWindow(ctk.CTkToplevel):
         except Exception as e:
             messagebox.showerror("Restore Error", f"Could not restore {tag_name}: {e}", parent=window)
         self.refresh_all()
+        self._refresh_app_tag_lists()
         window.destroy()
 
     def change_color(self, tag_name, old_color):
