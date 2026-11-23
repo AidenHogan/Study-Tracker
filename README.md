@@ -23,11 +23,15 @@ This project was conceived as a tool to gain better insights into personal produ
 
 **In-Depth Analytics:**
 Breakdown of time spent per subject (Pie Chart) and productivity trends by day, hour, and day of the week (Bar Charts).
-<img width="1917" height="1025" alt="image" src="https://github.com/user-attachments/assets/10c6d6a6-de0a-4455-9a4b-f8b5496d92ff" />
+<img width="1915" height="1025" alt="image" src="https://github.com/user-attachments/assets/ad656933-3cf8-4385-9e91-2ba0aa5fbed3" />
 
-Additional stats models available for automated analysis:
+Additional statistical models available for automated analysis include Lasso regression, standard linear regression, quantile regression, Partial Least Squares (PLS), Hidden Markov Models (HMM), and Impulse Response Functions (IRF). Supporting exploratory techniques include Principal Component Analysis (PCA), weekly correlation matrices, cross-correlation functions (CCF), and event study analysis.
 
 <img width="1917" height="1025" alt="image" src="https://github.com/user-attachments/assets/5595c7e2-d635-4ced-aa00-1bfb2bdd8e05" />
+<img width="1917" height="1022" alt="image" src="https://github.com/user-attachments/assets/dc9d6aa7-0fcc-4b85-a254-3ecde13ec68d" />
+
+
+
 
 
 
@@ -36,7 +40,7 @@ Additional stats models available for automated analysis:
 Import sleep and wellness data from a Garmin Connect API for one-click sync of sleep and wellness data, or CSV export to manually track and enter sleep duration.
 
 Visualize relationships between study time and metrics like Sleep Score, Sleep Duration, and various Garmin data.
-<img width="1917" height="1023" alt="image" src="https://github.com/user-attachments/assets/69ed9e82-64e8-4065-91ab-0603f3fa335c" />
+<img width="1917" height="988" alt="image" src="https://github.com/user-attachments/assets/c86c67e5-ef37-459c-9c5c-5ac5eb9778d4" />
 
 **Data Management:**
 
