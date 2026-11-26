@@ -2,7 +2,7 @@
 
 import customtkinter as ctk
 from tkinter import messagebox
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 from plyer import notification
 from playsound3 import playsound
@@ -18,13 +18,13 @@ class PomodoroTab(ctk.CTkFrame):
         # --- Pomodoro State Variables ---
         self.pomo_timer_job = None
         self.pomo_state = "Stopped"  # Can be: Stopped, Work, Break, Paused
+        self.pomo_paused_state = None  # what is paused while pomo_state is Paused: Work or Break
+        self.pomo_break_type = "Short Break"
         self.pomo_seconds_left = 0
         self.pomo_sessions_done = 0
-        self.pomo_start_time = None
-        self.pomo_paused_seconds = 0
-        self.pomo_pause_start_time = None
-        self.pomo_total_paused_duration = timedelta(0)
+        self.pomo_start_time = None  # start of the stretch running now (since the last start/resume)
         self.enable_notifications = ctk.BooleanVar(value=True)
+        self.skip_breaks = ctk.BooleanVar(value=False)
 
         # --- UI Setup ---
         self.grid_columnconfigure(1, weight=1)
@@ -57,6 +57,11 @@ class PomodoroTab(ctk.CTkFrame):
         self.pomo_reset_button = ctk.CTkButton(controls_frame, text="Reset", height=40,
                                                command=self.reset_pomodoro_timer)
         self.pomo_reset_button.grid(row=0, column=1, padx=(5, 0), sticky="ew")
+        # Only shown during a break
+        self.pomo_skip_button = ctk.CTkButton(controls_frame, text="Skip Break", height=32,
+                                              command=self.skip_break)
+        self.pomo_skip_button.grid(row=1, column=0, columnspan=2, pady=(8, 0), sticky="ew")
+        self.pomo_skip_button.grid_remove()
 
         # -- Task Entry --
         task_frame = ctk.CTkFrame(left_frame)
@@ -112,12 +117,10 @@ class PomodoroTab(ctk.CTkFrame):
         self.pomo_sessions_goal = ctk.CTkEntry(settings_frame, width=50);
         self.pomo_sessions_goal.grid(row=1, column=7, padx=(0, 10));
         self.pomo_sessions_goal.insert(0, "4")
-        ctk.CTkSwitch(settings_frame, text="Enable Notifications", variable=self.enable_notifications).grid(row=2,
-                                                                                                            column=0,
-                                                                                                            columnspan=8,
-                                                                                                            pady=10,
-                                                                                                            padx=10,
-                                                                                                            sticky="w")
+        ctk.CTkSwitch(settings_frame, text="Enable Notifications", variable=self.enable_notifications).grid(
+            row=2, column=0, columnspan=4, pady=10, padx=10, sticky="w")
+        ctk.CTkSwitch(settings_frame, text="Skip Breaks", variable=self.skip_breaks).grid(
+            row=2, column=4, columnspan=4, pady=10, padx=10, sticky="w")
 
         # -- Log --
         self.pomo_log_frame = ctk.CTkScrollableFrame(right_frame, label_text="Today's Pomodoro Log")
@@ -140,23 +143,30 @@ class PomodoroTab(ctk.CTkFrame):
         except Exception as e:
             print(f"Notification Error: {e}")
 
+    @staticmethod
+    def _read_int(entry, default, minimum=0):
+        try:
+            value = int(entry.get())
+        except ValueError:
+            return default
+        return value if value >= minimum else default
+
+    def _cancel_timer(self):
+        if self.pomo_timer_job:
+            self.after_cancel(self.pomo_timer_job)
+            self.pomo_timer_job = None
+
     def toggle_pomodoro_timer(self):
         if self.pomo_state in ["Work", "Break"]:  # Pause the timer
-            self.pomo_paused_seconds = self.pomo_seconds_left
-            self.pomo_state = "Paused"
-            if self.pomo_timer_job: self.after_cancel(self.pomo_timer_job)
+            # Log the stretch up to now, so the time spent paused is never part of any entry.
+            self._save_stretch(self.pomo_state)
+            self._cancel_timer()
+            self.pomo_paused_state, self.pomo_state = self.pomo_state, "Paused"
             self.pomo_toggle_button.configure(text="Resume")
-            self.pomo_pause_start_time = datetime.now()
-        elif self.pomo_state == "Paused":  # Resume the timer
-            if self.pomo_pause_start_time:
-                pause_duration = datetime.now() - self.pomo_pause_start_time
-                self.pomo_total_paused_duration += pause_duration
-                self.pomo_pause_start_time = None
-            self.pomo_seconds_left = self.pomo_paused_seconds
-            if self.pomo_sessions_done % int(self.pomo_sessions_goal.get() or 4) == 0 and self.pomo_sessions_done > 0:
-                self.pomo_state = "Break"
-            else:
-                self.pomo_state = "Work" if self.pomo_status_label.cget('text').startswith("Work") else "Break"
+            self._refresh_displays(self.pomo_paused_state)
+        elif self.pomo_state == "Paused":  # Resume: a new stretch starts now
+            self.pomo_state, self.pomo_paused_state = self.pomo_paused_state, None
+            self.pomo_start_time = datetime.now()
             self.pomo_timer_job = self.after(1000, self.update_pomodoro_display)
             self.pomo_toggle_button.configure(text="Pause")
         elif self.pomo_state == "Stopped":  # Start the first session
@@ -164,20 +174,19 @@ class PomodoroTab(ctk.CTkFrame):
                 messagebox.showwarning("No Tag", "Please select a subject tag before starting a work session.",
                                        parent=self)
                 return
-            self._start_next_pomo_session()
+            self._start_work()
 
     def reset_pomodoro_timer(self):
-        if self.pomo_timer_job: self.after_cancel(self.pomo_timer_job)
-        self.pomo_timer_job = None
+        self._cancel_timer()
         self.pomo_state = "Stopped"
+        self.pomo_paused_state = None
+        self.pomo_start_time = None
         self.pomo_sessions_done = 0
-        try:
-            work_mins = int(self.pomo_work_min.get())
-        except ValueError:
-            work_mins = 25
+        work_mins = self._read_int(self.pomo_work_min, 25)
         self.pomo_time_display.configure(text=f"{work_mins:02d}:00")
         self.pomo_status_label.configure(text="Ready to start!")
         self.pomo_toggle_button.configure(text="Start", **ctk.ThemeManager.theme["CTkButton"])
+        self.pomo_skip_button.grid_remove()
 
     def update_pomodoro_display(self):
         if self.pomo_seconds_left > 0:
@@ -188,81 +197,94 @@ class PomodoroTab(ctk.CTkFrame):
         else:
             self._finish_pomodoro_session()
 
-    def _finish_pomodoro_session(self):
-        end_time = datetime.now()
-        raw_duration = end_time - self.pomo_start_time
-        duration = (raw_duration - self.pomo_total_paused_duration).total_seconds()
-        task_title = self.pomo_task_entry.get()
-        task_desc = self.pomo_task_desc.get("1.0", "end-1c").strip()
+    def _save_stretch(self, kind):
+        """Log the uninterrupted stretch of `kind` (Work or Break) that is ending now, once."""
+        start, end = self.pomo_start_time, datetime.now()
+        if start is None:
+            return
+        duration = (end - start).total_seconds()
+        if duration < 1:
+            self.pomo_start_time = None
+            return
+        # pomo_start_time is cleared as soon as the stretch is stored: never logged twice, and
+        # kept for another try if storing it fails.
+        if kind == "Work":
+            task_title = self.pomo_task_entry.get()
+            task_desc = self.pomo_task_desc.get("1.0", "end-1c").strip()
+            main_session_id = db.add_session(self.pomo_tag_combobox.get(), start, end, duration,
+                                             f"Pomodoro Task: {task_title}\n\n{task_desc}".strip())
+            self.pomo_start_time = None
+            db.add_pomodoro_session("Work", start, end, duration, task_title, task_desc, main_session_id)
+        else:
+            db.add_pomodoro_session(self.pomo_break_type, start, end, duration, "Break", "")
+            self.pomo_start_time = None
 
-        if self.pomo_state == "Work":
-            main_session_id = db.add_session(
-                self.pomo_tag_combobox.get(),
-                self.pomo_start_time,
-                end_time,
-                duration,
-                f"Pomodoro Task: {task_title}\n\n{task_desc}".strip()
-            )
-            db.add_pomodoro_session("Work", self.pomo_start_time, end_time, duration, task_title, task_desc,
-                                    main_session_id)
-            self.pomo_sessions_done += 1
-
-            self.pomo_task_entry.delete(0, 'end')
-            self.pomo_task_desc.delete("1.0", 'end')
-
+    def _refresh_displays(self, kind):
+        if kind == "Work":
             self.master_app.update_all_displays()
         else:
-            prev_session_was_work_num = self.pomo_sessions_done
-            sessions_goal = int(self.pomo_sessions_goal.get() or 4)
-            break_type = "Long Break" if prev_session_was_work_num % sessions_goal == 0 and prev_session_was_work_num > 0 else "Short Break"
-            db.add_pomodoro_session(break_type, self.pomo_start_time, end_time, duration, "Break", "")
-            self.master_app.refresh_tabs("Pomodoro")
+            self.master_app.refresh_tabs("Pomodoro")  # breaks only appear in the log here
 
-        self._start_next_pomo_session()
-
-    def _start_next_pomo_session(self):
-        try:
-            sessions_goal = int(self.pomo_sessions_goal.get())
-            if sessions_goal <= 0: sessions_goal = 4
-        except ValueError:
-            sessions_goal = 4
-
-        last_state_was_work = self.pomo_state == "Work"
-
-        if last_state_was_work:
-            if self.pomo_sessions_done > 0 and self.pomo_sessions_done % sessions_goal == 0:
-                self.pomo_state = "Break"
-                try:
-                    duration_mins = int(self.pomo_long_brk_min.get())
-                except ValueError:
-                    duration_mins = 15
-                self.pomo_status_label.configure(text="Time for a long break!")
-                self._send_notification("Break Time!", f"Nicely done! Time for a {duration_mins}-minute break.")
+    def _finish_pomodoro_session(self):
+        finished = self.pomo_state
+        self._save_stretch(finished)
+        # Move on before redrawing anything: if a redraw fails, the finished session must not
+        # stay current, or resuming it would log it a second time.
+        if finished == "Work":
+            self.pomo_sessions_done += 1
+            self.pomo_task_entry.delete(0, 'end')
+            self.pomo_task_desc.delete("1.0", 'end')
+            if self.skip_breaks.get():
+                self._start_work()
             else:
-                self.pomo_state = "Break"
-                try:
-                    duration_mins = int(self.pomo_short_brk_min.get())
-                except ValueError:
-                    duration_mins = 5
-                self.pomo_status_label.configure(text="Time for a short break!")
-                self._send_notification("Break Time!", f"Great work! Take a {duration_mins}-minute break.")
+                self._start_break()
         else:
-            self.pomo_state = "Work"
-            try:
-                duration_mins = int(self.pomo_work_min.get())
-            except ValueError:
-                duration_mins = 25
-            self.pomo_status_label.configure(text=f"Work Session {self.pomo_sessions_done + 1} of {sessions_goal}")
-            if self.pomo_sessions_done > 0 or not last_state_was_work:
-                self._send_notification("Back to Work!", f"Time to focus for {duration_mins} minutes. You can do it!")
+            self._start_work()
+        self._refresh_displays(finished)
 
+    def skip_break(self):
+        """End the current (running or paused) break and start the next work session."""
+        if "Break" not in (self.pomo_state, self.pomo_paused_state):
+            return
+        self._save_stretch("Break")
+        self._start_work()
+        self._refresh_displays("Break")
+
+    def _sessions_goal(self):
+        return self._read_int(self.pomo_sessions_goal, 4, minimum=1)
+
+    def _start_work(self):
+        duration_mins = self._read_int(self.pomo_work_min, 25, minimum=1)
+        self.pomo_status_label.configure(
+            text=f"Work Session {self.pomo_sessions_done + 1} of {self._sessions_goal()}")
+        self._begin("Work", duration_mins)
+        self._send_notification("Back to Work!", f"Time to focus for {duration_mins} minutes. You can do it!")
+
+    def _start_break(self):
+        if self.pomo_sessions_done % self._sessions_goal() == 0:
+            self.pomo_break_type = "Long Break"
+            duration_mins = self._read_int(self.pomo_long_brk_min, 15)
+            status, message = "Time for a long break!", f"Nicely done! Time for a {duration_mins}-minute break."
+        else:
+            self.pomo_break_type = "Short Break"
+            duration_mins = self._read_int(self.pomo_short_brk_min, 5)
+            status, message = "Time for a short break!", f"Great work! Take a {duration_mins}-minute break."
+        self.pomo_status_label.configure(text=status)
+        self._begin("Break", duration_mins)
+        self._send_notification("Break Time!", message)
+
+    def _begin(self, state, duration_mins):
+        """Start the countdown of a new work session or break."""
+        self._cancel_timer()
+        self.pomo_state, self.pomo_paused_state = state, None
         self.pomo_seconds_left = duration_mins * 60
-        mins, secs = divmod(self.pomo_seconds_left, 60)
-        self.pomo_time_display.configure(text=f"{mins:02d}:{secs:02d}")
-        self.pomo_start_time = datetime.now()
-        self.pomo_total_paused_duration = timedelta(0)
-        self.pomo_pause_start_time = None
+        self.pomo_time_display.configure(text=f"{duration_mins:02d}:00")
         self.pomo_toggle_button.configure(text="Pause", fg_color="#db524b", hover_color="#b0423d")
+        if state == "Break":
+            self.pomo_skip_button.grid()
+        else:
+            self.pomo_skip_button.grid_remove()
+        self.pomo_start_time = datetime.now()
         self.pomo_timer_job = self.after(1000, self.update_pomodoro_display)
 
     def open_edit_popup(self, pomo_id):
@@ -305,7 +327,8 @@ class PomodoroTab(ctk.CTkFrame):
             lbl_main = ctk.CTkLabel(info_frame, text=main_text, anchor="w", font=ctk.CTkFont(weight="bold"))
             lbl_main.grid(row=0, column=0, sticky="ew", padx=5)
 
-            sub_text = f"{start_time.strftime('%I:%M %p')} ({int(duration / 60)} min)"
+            length = f"{int(duration / 60)} min" if duration >= 60 else f"{int(duration)} sec"
+            sub_text = f"{start_time.strftime('%I:%M %p')} ({length})"
             lbl_sub = ctk.CTkLabel(info_frame, text=sub_text, anchor="w", text_color="gray")
             lbl_sub.grid(row=1, column=0, sticky="ew", padx=5)
 
@@ -355,16 +378,19 @@ class PomodoroTab(ctk.CTkFrame):
             "• Work: Length of focus sessions (minutes)\n"
             "• Short Break: Length of short breaks (minutes)\n"
             "• Long Break: Length of long breaks (minutes)\n"
-            "• Sessions until Long Break: How many work sessions before a long break\n\n"
+            "• Cycles: How many work sessions before a long break\n"
+            "• Skip Breaks: Go straight from one work session to the next\n\n"
             "CONTROLS:\n"
             "• Start/Pause: Begin or pause the current timer\n"
-            "• Reset: Stop and clear the current session\n"
-            "• Pause: Pause without losing progress\n\n"
+            "• Pause: Keeps your place. The time so far is logged as its own entry, and resuming\n"
+            "  starts a new one, so time spent paused is never counted\n"
+            "• Skip Break: End the current break early (only shown during a break)\n"
+            "• Reset: Stop and drop the time since you last started or resumed\n\n"
             "NOTIFICATIONS:\n"
             "• Toggle notifications on/off\n"
             "• Get alerts when work/break sessions end\n\n"
             "LOG:\n"
-            "• View all completed pomodoro sessions\n"
+            "• View today's work sessions and breaks (one entry per stretch between pauses)\n"
             "• Edit work session details\n"
             "• Delete sessions if needed\n"
             "• Click on task name to see description"
